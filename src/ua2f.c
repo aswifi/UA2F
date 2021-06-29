@@ -441,7 +441,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    //str = malloc(sizeof_buf);
+    str = malloc(sizeof_buf);
     //memset(str, 'F', sizeof_buf); // 原始UA参数
     memcpy(str,"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",115); // 自定义UA参数
 
