@@ -441,9 +441,9 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    //str = malloc(sizeof_buf);
+    str = malloc(sizeof_buf);
     //memset(str, '1', sizeof_buf); // 原始UA参数
-    memcpy(str,"Mozilla/5.0 (Windows NT 10.0; Win64; x64)",41); // 自定义UA参数
+    memcpy(str,"Mozilla/5.0 (Windows NT 10.0; Win64; x64)",41, sizeof_buf); // 自定义UA参数
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
