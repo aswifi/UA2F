@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=UA2F
 PKG_VERSION:=3.7
-PKG_RELEASE:=13
+PKG_RELEASE:=14
 
 PKG_LICENSE:=GPL-3.0-only
 PKG_LICENSE_FILE:=LICENSE
@@ -15,7 +15,7 @@ define Package/ua2f
   SUBMENU:=Routing and Redirection
   TITLE:=Change User-Agent to Fwords
   URL:=https://github.com/Zxilly/UA2F
-  DEPENDS:=+iptables-mod-nfqueue +libipset +libnetfilter-conntrack +libnetfilter-queue
+  DEPENDS:=+ipset +iptables-mod-nfqueue +libnetfilter-conntrack +libnetfilter-queue
 endef
 
 define Package/ua2f/description
