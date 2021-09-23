@@ -194,12 +194,9 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     bool noUA = false;
     char *ip;
     uint16_t port = 0;
-
     char addcmd[50];
 
-
     debugflag = 0;
-
 
     if (nfq_nlmsg_parse(nlh, attr) < 0) {
         perror("problems parsing");
@@ -285,34 +282,27 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
     if (tcppkpayload) {
-        char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent:", 13);
-/*        if (uapointer) {
-            uapointer = memmem(tcppkpayload, tcppklen, "\r\nUser-Agent:", 13);
-            if (!uapointer) {
-                uapointer = memmem(tcppkpayload, tcppklen, "\r\nUser-agent:", 13);
-            }
-        } else {
-            uapointer = memmem(tcppkpayload, tcppklen, "\r\nuser-agent:", 13);
-        }*/
+        char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14); // 找到指向 \r 的指针
 
         if (uapointer) {
-            uaoffset = uapointer - tcppkpayload + 14;
+            uaoffset = uapointer - tcppkpayload + 14; // 应该指向 UA 的第一个字符
 
             if (uaoffset >= tcppklen) {
-                syslog(LOG_WARNING, "Offset overflow");
+                syslog(LOG_WARNING, "User-Agent position overflow, may cause by TCP Segment Reassembled.");
                 pktb_free(pktb);
                 return MNL_CB_OK;
             }
 
+            char *uaStartPointer = uapointer + 14;
             for (int i = 0; i < tcppklen - uaoffset - 2; ++i) {
-                if (*(uapointer + 14 + i) == '\r') {
+                if (*(uaStartPointer + i) == '\r') {
                     ualength = i;
                     break;
                 }
             }
 
             if (ualength + uaoffset > tcppklen) {
-                syslog(LOG_WARNING, "UA overflow");
+                syslog(LOG_ERR, "UA overflow, this is an unexpected error."); // 不应该出现，出现说明指针越界了
                 pktb_free(pktb);
                 return MNL_CB_OK;
             }
@@ -321,6 +311,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 UAcount++; //记录修改包的数量
                 noUA = false;
             } else {
+                syslog(LOG_ERR, "Mangle packet failed.");
                 pktb_free(pktb);
                 return MNL_CB_ERROR;
             }
@@ -395,7 +386,7 @@ int main(int argc, char *argv[]) {
             }
         }
         errcount++;
-        if (errcount > 50) {
+        if (errcount > 10) {
             syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
             syslog(LOG_ERR, "Exit at breakpoint 3.");
             exit(EXIT_FAILURE);
@@ -443,7 +434,7 @@ int main(int argc, char *argv[]) {
 
     str = malloc(sizeof_buf);
     memset(str, '1', sizeof_buf); // 原始UA参数
-    memcpy(str,"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",115); // 自定义UA参数
+    memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.54 Safari/537.36", 114); // 自定义UA参数
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
