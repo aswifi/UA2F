@@ -64,7 +64,3 @@ jobs:
           prerelease: true
           files: |
             openwrt-sdk-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64/bin/packages/mipsel_24kc/base/ua2f*
-
-
-
-
