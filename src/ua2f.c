@@ -117,7 +117,7 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
         nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
     }
 
-    
+
     if (noUA) {
         if (mark == 1) {
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
@@ -295,7 +295,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                     pktb_free(pktb);
                     return MNL_CB_ERROR;
                 }
-
+            }
         } else {
             noUA = true;
         }
