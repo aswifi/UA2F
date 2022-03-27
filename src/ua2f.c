@@ -404,7 +404,7 @@ int main(int argc, char *argv[]) {
     }
 
     str = malloc(sizeof_buf);
-    memset(str, '1', sizeof_buf); // 原始UA参数
+    memset(str, ' ', sizeof_buf); // 原始UA参数
     //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
     //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
     memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.8.6124.364 Safari/537.36", 115); // WinOS Common UA
