@@ -1,7 +1,7 @@
 name: C/C++ CI Lede SDK
 
-on:
-  push:
+#on:
+#  push:
 
 jobs:
   build:
