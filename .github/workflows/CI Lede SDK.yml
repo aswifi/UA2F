@@ -3,8 +3,8 @@ name: C/C++ CI Lede SDK
 #on:
 #  push:
 
-jobs:
-  build:
+#jobs:
+#  build:
 
     runs-on: ubuntu-latest
 
