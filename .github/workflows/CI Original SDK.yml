@@ -25,7 +25,7 @@ jobs:
       - uses: actions/cache@v2
         id: cache
         with:
-          path: openwrt-sdk-21.02.0-rc1-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64
+          path: openwrt-sdk-21.02.3-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64
           key: ${{ runner.os }}-openwrt
           restore-keys: |
             ${{ runner.os }}-openwrt
@@ -33,19 +33,19 @@ jobs:
       - name: Setup OpenWRT SDK
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          wget https://downloads.openwrt.org/releases/21.02.0-rc1/targets/ramips/mt7621/openwrt-sdk-21.02.0-rc1-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz
-          tar -xvJf openwrt-sdk-21.02.0-rc1-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz
-          cd openwrt-sdk-21.02.0-rc1-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64
+          wget https://downloads.openwrt.org/releases/21.02.3/targets/ramips/mt7621/openwrt-sdk-21.02.3-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+          tar -xvJf openwrt-sdk-21.02.3-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+          cd openwrt-sdk-21.02.3-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          path: openwrt-sdk-21.02.0-rc1-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64/package/UA2F
+          path: openwrt-sdk-21.02.3-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64/package/UA2F
 
       - name: Compile Package
-        working-directory: ./openwrt-sdk-21.02.0-rc1-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64
+        working-directory: ./openwrt-sdk-21.02.3-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64
         run: |
           make defconfig
           make package/UA2F/compile -j2 V=s
@@ -55,6 +55,6 @@ jobs:
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
           automatic_release_tag: "${{ steps.current-time.outputs.formattedTime }}"
-          prerelease: true
+          prerelease: false
           files: |
-            openwrt-sdk-21.02.0-rc1-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64/bin/packages/mipsel_24kc/base/ua2f*
+            openwrt-sdk-21.02.3-ramips-mt7621_gcc-8.4.0_musl.Linux-x86_64/bin/packages/mipsel_24kc/base/ua2f*
