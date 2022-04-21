@@ -46,7 +46,7 @@ static time_t start_t, current_t;
 
 static char timestr[60];
 
-char *str = NULL;
+char *UAstr = NULL;
 
 static struct ipset *Pipset;
 
@@ -265,7 +265,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
         if (uapointer) {
             uaoffset = uapointer - tcppkpayload + 14; // 应该指向 UA 的第一个字符
 
-            if (uaoffset > tcppklen - 2) { // User-Agent: XXX\r\n
+            if (uaoffset >= tcppklen - 2) { // User-Agent: XXX\r\n
                 syslog(LOG_WARNING, "User-Agent has no content");
                 // https://github.com/Zxilly/UA2F/pull/42#issue-1159773997
                 nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
@@ -281,14 +281,8 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 }
             }
 
-//            if (ualength + uaoffset > tcppklen) {
-//                syslog(LOG_ERR, "UA overflow, this is an unexpected error."); // 不应该出现，出现说明指针越界了
-//                pktb_free(pktb);
-//                return MNL_CB_OK;
-//            }
-
             if (ualength > 0) {
-                if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, str, ualength) == 1) {
+                if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
                     UAcount++; //记录修改包的数量
                 } else {
                     syslog(LOG_ERR, "Mangle packet failed.");
@@ -331,16 +325,13 @@ int main(int argc, char *argv[]) {
 
     int errcount = 0;
 
-//    signal(SIGCHLD, SIG_IGN);
-//    signal(SIGHUP, SIG_IGN);
-
     signal(SIGTERM, killChild);
 
     while (true) {
         child_status = fork();
         if (child_status < 0) {
             syslog(LOG_ERR, "Failed to give birth.");
-            syslog(LOG_ERR, "Exit at breakpoint 2.");
+            syslog(LOG_ERR, "Exit at fork.");
             exit(EXIT_FAILURE);
         } else if (child_status == 0) {
             syslog(LOG_NOTICE, "UA2F processor start at [%d].", getpid());
@@ -359,7 +350,7 @@ int main(int argc, char *argv[]) {
         errcount++;
         if (errcount > 10) {
             syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
-            syslog(LOG_ERR, "Exit at breakpoint 3.");
+            syslog(LOG_ERR, "Exit with too many error.");
             exit(EXIT_FAILURE);
         }
     }
@@ -385,13 +376,13 @@ int main(int argc, char *argv[]) {
 
     if (nl == NULL) {
         perror("mnl_socket_open");
-        syslog(LOG_ERR, "Exit at breakpoint 4.");
+        syslog(LOG_ERR, "Exit at mnl_socket_open.");
         exit(EXIT_FAILURE);
     }
 
     if (mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID) < 0) {
         perror("mnl_socket_bind");
-        syslog(LOG_ERR, "Exit at breakpoint 5.");
+        syslog(LOG_ERR, "Exit at mnl_socket_bind.");
         exit(EXIT_FAILURE);
     }
     portid = mnl_socket_get_portid(nl);
@@ -403,11 +394,11 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    str = malloc(sizeof_buf);
-    memset(str, ' ', sizeof_buf); // 原始UA参数
+    UAstr = malloc(sizeof_buf);
+    memset(UAstr, ' ', sizeof_buf); // 原始UA参数
     //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
     //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
-    memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.1.5632.49 Safari/537.36", 115); // WinOS Common UA
+    memcpy(UAstr, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.1.5632.49 Safari/537.36", 115); // WinOS Common UA
     //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
     //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
     //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
@@ -433,7 +424,7 @@ int main(int argc, char *argv[]) {
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
-        syslog(LOG_ERR, "Exit at breakpoint 8.");
+        syslog(LOG_ERR, "Exit at mnl_socket_send.");
         exit(EXIT_FAILURE);
     }
 
@@ -446,14 +437,14 @@ int main(int argc, char *argv[]) {
         ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
         if (ret == -1) { //stop at failure
             perror("mnl_socket_recvfrom");
-            syslog(LOG_ERR, "Exit at breakpoint 9.");
+            syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
             exit(EXIT_FAILURE);
         }
         ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
         if (ret < 0) { //stop at failure
             // printf("errno=%d\n", errno);
             perror("mnl_cb_run");
-            syslog(LOG_ERR, "Exit at breakpoint 10.");
+            syslog(LOG_ERR, "Exit at mnl_cb_run.");
             exit(EXIT_FAILURE);
         }
     }
