@@ -102,8 +102,8 @@ static char *time2str(int sec) {
 }
 
 static int parse_attrs(const struct nlattr *attr, void *data) {
-    assert(attr != NULL);
-    assert(data != NULL);
+//    assert(attr != NULL);
+//    assert(data != NULL);
 
     struct nlattr **tb = data;
     int type = mnl_attr_get_type(attr);
@@ -178,8 +178,8 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
 }
 
 static int queue_cb(const struct nlmsghdr *nlh, void *data) {
-    assert(nlh != NULL);
-    assert(data != NULL);
+//    assert(nlh != NULL);
+//    assert(data != NULL);
 
     struct nfqnl_msg_packet_hdr *ph = NULL;
     struct nlattr *attr[NFQA_MAX + 1] = {};
