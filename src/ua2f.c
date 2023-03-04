@@ -79,18 +79,25 @@ void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
 }
 
 static char *time2str(int sec) {
-    memset(timestr, 0, sizeof(timestr));
-    if (sec <= 60) {
-        sprintf(timestr, "%d seconds", sec);
-    } else if (sec <= 3600) {
-        sprintf(timestr, "%d minutes and %d seconds", sec / 60, sec % 60);
-    } else if (sec <= 86400) {
-        sprintf(timestr, "%d hours, %d minutes and %d seconds", sec / 3600, sec % 3600 / 60, sec % 60);
+    static const int MINUTE = 60;
+    static const int HOUR = 60 * MINUTE;
+    static const int DAY = 24 * HOUR;
+
+    static char timestr[32] = {0};
+
+    time_t timestamp = (time_t)sec;
+    struct tm *tm_info = localtime(&timestamp);
+
+    if (sec <= 0) {
+        sprintf(timestr, "0 seconds");
+    } else if (sec < HOUR) {
+        strftime(timestr, sizeof(timestr), "%M minutes and %S seconds", tm_info);
+    } else if (sec < DAY) {
+        strftime(timestr, sizeof(timestr), "%H hours, %M minutes and %S seconds", tm_info);
     } else {
-        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / 86400, sec % 86400 / 3600,
-                sec % 3600 / 60,
-                sec % 60);
+        strftime(timestr, sizeof(timestr), "%d days, %H hours, %M minutes and %S seconds", tm_info);
     }
+
     return timestr;
 }
 
