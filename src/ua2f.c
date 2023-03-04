@@ -46,9 +46,8 @@ static time_t start_t, current_t;
 
 static char timestr[60];
 
-const size_t MAX_UA_LENGTH = 256;
-char UAstr[MAX_UA_LENGTH] = {0};
-const char *const DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.6.4279.38 Safari/537.36";
+const size_t UA_MAX_LENGTH = 256;
+const char *const DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.1.2407.89 Safari/537.36";
 
 static struct ipset *Pipset;
 
@@ -261,187 +260,198 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     tcppkpayload = nfq_tcp_get_payload(tcppkhdl, pktb); //获取 tcp载荷
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
+    char *UAstr = NULL;
+    size_t uaLength = strnlen(DEFAULT_UA, UA_MAX_LENGTH - 1);
+    if (uaLength >= UA_MAX_LENGTH) {
+        syslog(LOG_WARNING, "Default User-Agent header too long");
+        uaLength = UA_MAX_LENGTH - 1;
+    }
+    UAstr = malloc(UA_MAX_LENGTH);
+    if (UAstr == NULL) {
+        syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
+        return MNL_CB_ERROR;
+    }
+    memset(UAstr, ' ', UA_MAX_LENGTH);
+    strncpy_s(UAstr, UA_MAX_LENGTH, DEFAULT_UA, uaLength);
+
     if (tcppkpayload) {
         const char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14);
         if (uapointer != NULL) {
+            size_t uaOffset = uapointer - tcppayload + 14;
+            if (uaOffset >= tcppklen - 2) { // User-Agent: XXX\r\n
+                syslog(LOG_WARNING, "User-Agent has no content");
+                nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
+                free(UAstr); // 释放 UAstr 指向的内存
+                return MNL_CB_OK;
+            }
             const char *endPointer = memchr(uapointer, '\r', tcppklen - (uapointer - tcppayload));
             if (endPointer != NULL) {
                 size_t uaLength = endPointer - uapointer - 14;
-                if (uaLength > MAX_UA_LENGTH - 1) {
-                    syslog(LOG_WARNING, "User-Agent header too long");
-                    uaLength = MAX_UA_LENGTH - 1;
-                }
-                strncpy(UAstr, uapointer + 14, uaLength);
-                UAstr[uaLength] = '\0';
-                size_t uaOffset = uapointer - tcppayload + 14;
-                if (nfq_tcp_mangle_ipv4(pktb, uaOffset, uaLength, UAstr, uaLength) == 1) {
-                    UAcount++;
-                } else {
-                    syslog(LOG_ERR, "Mangle packet failed.");
-                    pktb_free(pktb);
-                    return MNL_CB_ERROR;
+                if (uaLength > 0) {
+                    if (uaLength >= UA_MAX_LENGTH) {
+                        syslog(LOG_WARNING, "User-Agent header too long");
+                        uaLength = UA_MAX_LENGTH - 1;
+                    }
+                    strncpy_s(UAstr, UA_MAX_LENGTH, uapointer + 14, uaLength);
+                    size_t actualLength = strnlen(UAstr, UA_MAX_LENGTH);
+                    if (actualLength >= UA_MAX_LENGTH) {
+                        syslog(LOG_ERR, "User-Agent header too long after copying");
+                        free(UAstr); // 释放 UAstr 指向的内存
+                        return MNL_CB_ERROR;
+                    }
+                    if (nfq_tcp_mangle_ipv4(pktb, uaOffset, uaLength, UAstr, uaLength) == 1) {
+                        UAcount++; //记录修改包的数量
+                    } else {
+                        syslog(LOG_ERR, "Mangle packet failed.");
+                        pktb_free(pktb);
+                        free(UAstr); // 释放 UAstr 指向的内存
+                        return MNL_CB_ERROR;
+                    }
                 }
             } else {
-                syslog(LOG_WARNING, "User-Agent header not terminated with \\r");
+                syslog(LOG_WARNING,
+
+                       nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
+
+                if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
+                    httpcount = UAcount;
+                    current_t = time(NULL);
+                    syslog(LOG_INFO,
+                           "UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s",
+                           UAcount, tcpcount, UAmark, noUAmark,
+                           time2str((int) difftime(current_t, start_t)));
+                }
+
+                return MNL_CB_OK;
             }
-        } else {
-            noUA = true;
-        }
-    }
 
-    nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
-
-    if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
-        httpcount = UAcount;
-        current_t = time(NULL);
-        syslog(LOG_INFO,
-               "UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s",
-               UAcount, tcpcount, UAmark, noUAmark,
-               time2str((int) difftime(current_t, start_t)));
-    }
-
-    return MNL_CB_OK;
-}
-
-static void killChild() {
-    syslog(LOG_INFO, "Received SIGTERM, kill child %d", child_status);
-    kill(child_status, SIGKILL); // Not graceful, but work
-    mnl_socket_close(nl);
-    exit(EXIT_SUCCESS);
-}
-
-int main(int argc, char *argv[]) {
-    char *buf;
-    size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE / 2);
-    struct nlmsghdr *nlh;
-    ssize_t ret;
-    unsigned int portid;
-
-    int errcount = 0;
-
-    signal(SIGTERM, killChild);
-
-    while (true) {
-        child_status = fork();
-        if (child_status < 0) {
-            syslog(LOG_ERR, "Failed to give birth.");
-            syslog(LOG_ERR, "Exit at fork.");
-            exit(EXIT_FAILURE);
-        } else if (child_status == 0) {
-            syslog(LOG_NOTICE, "UA2F processor start at [%d].", getpid());
-            break;
-        } else {
-            syslog(LOG_NOTICE, "Try to start UA2F processor at [%d].", child_status);
-            int deadstat;
-            int deadpid;
-            deadpid = wait(&deadstat);
-            if (deadpid == -1) {
-                syslog(LOG_ERR, "Child suicide.");
-            } else {
-                syslog(LOG_ERR, "Meet fatal error.[%d] dies by %d", deadpid, deadstat);
+            static void killChild() {
+                syslog(LOG_INFO, "Received SIGTERM, kill child %d", child_status);
+                kill(child_status, SIGKILL); // Not graceful, but work
+                mnl_socket_close(nl);
+                exit(EXIT_SUCCESS);
             }
-        }
-        errcount++;
-        if (errcount > 10) {
-            syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
-            syslog(LOG_ERR, "Exit with too many error.");
-            exit(EXIT_FAILURE);
-        }
-    }
+
+            int main(int argc, char *argv[]) {
+                char *buf;
+                size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE / 2);
+                struct nlmsghdr *nlh;
+                ssize_t ret;
+                unsigned int portid;
+
+                int errcount = 0;
+
+                signal(SIGTERM, killChild);
+
+                while (true) {
+                    child_status = fork();
+                    if (child_status < 0) {
+                        syslog(LOG_ERR, "Failed to give birth.");
+                        syslog(LOG_ERR, "Exit at fork.");
+                        exit(EXIT_FAILURE);
+                    } else if (child_status == 0) {
+                        syslog(LOG_NOTICE, "UA2F processor start at [%d].", getpid());
+                        break;
+                    } else {
+                        syslog(LOG_NOTICE, "Try to start UA2F processor at [%d].", child_status);
+                        int deadstat;
+                        int deadpid;
+                        deadpid = wait(&deadstat);
+                        if (deadpid == -1) {
+                            syslog(LOG_ERR, "Child suicide.");
+                        } else {
+                            syslog(LOG_ERR, "Meet fatal error.[%d] dies by %d", deadpid, deadstat);
+                        }
+                    }
+                    errcount++;
+                    if (errcount > 10) {
+                        syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
+                        syslog(LOG_ERR, "Exit with too many error.");
+                        exit(EXIT_FAILURE);
+                    }
+                }
 
 
-    openlog("UA2F", LOG_PID, LOG_SYSLOG);
+                openlog("UA2F", LOG_PID, LOG_SYSLOG);
 
-    start_t = time(NULL);
+                start_t = time(NULL);
 
-    ipset_load_types();
-    Pipset = ipset_init();
+                ipset_load_types();
+                Pipset = ipset_init();
 
-    if (!Pipset) {
-        syslog(LOG_ERR, "Pipset not inited.");
-        exit(EXIT_FAILURE);
-    }
+                if (!Pipset) {
+                    syslog(LOG_ERR, "Pipset not inited.");
+                    exit(EXIT_FAILURE);
+                }
 
-    ipset_custom_printf(Pipset, func, func2, func3, NULL); // hook 掉退出的输出函数
+                ipset_custom_printf(Pipset, func, func2, func3, NULL); // hook 掉退出的输出函数
 
-    syslog(LOG_NOTICE, "Pipset inited.");
+                syslog(LOG_NOTICE, "Pipset inited.");
 
-    nl = mnl_socket_open(NETLINK_NETFILTER);
+                nl = mnl_socket_open(NETLINK_NETFILTER);
 
-    if (nl == NULL) {
-        perror("mnl_socket_open");
-        syslog(LOG_ERR, "Exit at mnl_socket_open.");
-        exit(EXIT_FAILURE);
-    }
+                if (nl == NULL) {
+                    perror("mnl_socket_open");
+                    syslog(LOG_ERR, "Exit at mnl_socket_open.");
+                    exit(EXIT_FAILURE);
+                }
 
-    if (mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID) < 0) {
-        perror("mnl_socket_bind");
-        syslog(LOG_ERR, "Exit at mnl_socket_bind.");
-        exit(EXIT_FAILURE);
-    }
-    portid = mnl_socket_get_portid(nl);
+                if (mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID) < 0) {
+                    perror("mnl_socket_bind");
+                    syslog(LOG_ERR, "Exit at mnl_socket_bind.");
+                    exit(EXIT_FAILURE);
+                }
+                portid = mnl_socket_get_portid(nl);
 
-    buf = malloc(sizeof_buf);
-    if (!buf) {
-        perror("allocate receive buffer");
-        syslog(LOG_ERR, "Exit at breakpoint 6.");
-        exit(EXIT_FAILURE);
-    }
+                buf = malloc(sizeof_buf);
+                if (!buf) {
+                    perror("allocate receive buffer");
+                    syslog(LOG_ERR, "Exit at breakpoint 6.");
+                    exit(EXIT_FAILURE);
+                }
 
-    if (!UAstr[0]) {
-        size_t uaLength = strlen(DEFAULT_UA);
-        if (uaLength > MAX_UA_LENGTH - 1) {
-            syslog(LOG_WARNING, "Default User-Agent header too long");
-            uaLength = MAX_UA_LENGTH - 1;
-        }
-        strncpy(UAstr, DEFAULT_UA, uaLength);
-        UAstr[uaLength] = '\0';
-    }
+                nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
+                nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
 
-    syslog(LOG_INFO, "Modified User-Agent: %s", UAstr);
+                if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
+                    perror("mnl_socket_send");
+                    syslog(LOG_ERR, "Exit at breakpoint 7.");
+                    exit(EXIT_FAILURE);
+                }
 
-    nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
-    nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
+                nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
+                nfq_nlmsg_cfg_put_params(nlh, NFQNL_COPY_PACKET, 0xffff);
 
-    if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
-        perror("mnl_socket_send");
-        syslog(LOG_ERR, "Exit at breakpoint 7.");
-        exit(EXIT_FAILURE);
-    }
-
-    nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
-    nfq_nlmsg_cfg_put_params(nlh, NFQNL_COPY_PACKET, 0xffff);
-
-    mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_FLAGS,
-                           htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
-    mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_MASK,
-                           htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
+                mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_FLAGS,
+                                       htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
+                mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_MASK,
+                                       htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
 
 
-    if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
-        perror("mnl_socket_send");
-        syslog(LOG_ERR, "Exit at mnl_socket_send.");
-        exit(EXIT_FAILURE);
-    }
+                if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
+                    perror("mnl_socket_send");
+                    syslog(LOG_ERR, "Exit at mnl_socket_send.");
+                    exit(EXIT_FAILURE);
+                }
 
-    ret = 1;
-    mnl_socket_setsockopt(nl, NETLINK_NO_ENOBUFS, &ret, sizeof(int));
+                ret = 1;
+                mnl_socket_setsockopt(nl, NETLINK_NO_ENOBUFS, &ret, sizeof(int));
 
-    syslog(LOG_NOTICE, "UA2F has inited successful.");
+                syslog(LOG_NOTICE, "UA2F has inited successful.");
 
-    while (1) {
-        ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
-        if (ret == -1) { //stop at failure
-            perror("mnl_socket_recvfrom");
-            syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
-            exit(EXIT_FAILURE);
-        }
-        ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
-        if (ret < 0) { //stop at failure
-            // printf("errno=%d\n", errno);
-            perror("mnl_cb_run");
-            syslog(LOG_ERR, "Exit at mnl_cb_run.");
-            exit(EXIT_FAILURE);
-        }
-    }
-}
+                while (1) {
+                    ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
+                    if (ret == -1) { //stop at failure
+                        perror("mnl_socket_recvfrom");
+                        syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
+                        exit(EXIT_FAILURE);
+                    }
+                    ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
+                    if (ret < 0) { //stop at failure
+                        // printf("errno=%d\n", errno);
+                        perror("mnl_cb_run");
+                        syslog(LOG_ERR, "Exit at mnl_cb_run.");
+                        exit(EXIT_FAILURE);
+                    }
+                }
+            }
