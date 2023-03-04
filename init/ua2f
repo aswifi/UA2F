@@ -10,6 +10,10 @@ start() {
         service_start /usr/bin/$APP
 }
 
+restart() {
+    service_restart /usr/bin/$APP
+}
+
 stop() {
         service_stop /usr/bin/$APP
 }
