@@ -8,6 +8,7 @@
 
 #include "ipset_hook.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,7 +85,7 @@ static char *time2str(int sec) {
 
     static char timestr[32] = {0};
 
-    time_t timestamp = (time_t)sec;
+    time_t timestamp = (time_t) sec;
     struct tm *tm_info = localtime(&timestamp);
 
     if (sec <= 0) {
@@ -109,7 +110,7 @@ static int parse_attrs(const struct nlattr *attr, void *data) {
 
     if (type >= 0 && type < MNL_SOCKET_BUFFER_SIZE) {
         if (!mnl_attr_validate(attr, MNL_TYPE_UNSPEC)) {
-            tb[type] = (struct nlattr *)attr;
+            tb[type] = (struct nlattr *) attr;
         }
     }
 
@@ -407,7 +408,7 @@ int main(int argc, char *argv[]) {
         syslog(LOG_ERR, "Exit at breakpoint 6.");
         exit(EXIT_FAILURE);
     }
-    
+
     if (!UAstr) {
         UAstr = malloc(strlen(DEFAULT_UA) + 1);
         memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
@@ -443,18 +444,16 @@ int main(int argc, char *argv[]) {
     syslog(LOG_NOTICE, "UA2F has inited successful.");
 
     while (1) {
-        ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
-        if (ret == -1) { //stop at failure
+        ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
+        if (ret < 0) {
             perror("mnl_socket_recvfrom");
-            syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
-            exit(EXIT_FAILURE);
+            break;
         }
-        ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
-        if (ret < 0) { //stop at failure
-            // printf("errno=%d\n", errno);
+        ret = mnl_cb_run(buf, ret, 0, portid, queue_cb, NULL);
+        if (ret < 0) {
             perror("mnl_cb_run");
-            syslog(LOG_ERR, "Exit at mnl_cb_run.");
-            exit(EXIT_FAILURE);
+            break;
         }
     }
+    mnl_socket_close(nl);
 }
