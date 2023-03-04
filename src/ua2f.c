@@ -46,7 +46,9 @@ static time_t start_t, current_t;
 
 static char timestr[60];
 
-char *UAstr = NULL;
+const size_t MAX_UA_LENGTH = 256;
+char UAstr[MAX_UA_LENGTH] = {0};
+const char *const DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.6.4279.38 Safari/537.36";
 
 static struct ipset *Pipset;
 
@@ -260,35 +262,27 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
     if (tcppkpayload) {
-        char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14); // 找到指向 \r 的指针
-
-        if (uapointer) {
-            uaoffset = uapointer - tcppkpayload + 14; // 应该指向 UA 的第一个字符
-
-            if (uaoffset >= tcppklen - 2) { // User-Agent: XXX\r\n
-                syslog(LOG_WARNING, "User-Agent has no content");
-                // https://github.com/Zxilly/UA2F/pull/42#issue-1159773997
-                nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
-                return MNL_CB_OK;
-            }
-
-            char *uaStartPointer = uapointer + 14;
-            const unsigned int uaLengthBound = tcppklen - uaoffset;
-            for (unsigned int i = 0; i < uaLengthBound; ++i) {
-                if (*(uaStartPointer + i) == '\r') {
-                    ualength = i;
-                    break;
+        const char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14);
+        if (uapointer != NULL) {
+            const char *endPointer = memchr(uapointer, '\r', tcppklen - (uapointer - tcppayload));
+            if (endPointer != NULL) {
+                size_t uaLength = endPointer - uapointer - 14;
+                if (uaLength > MAX_UA_LENGTH - 1) {
+                    syslog(LOG_WARNING, "User-Agent header too long");
+                    uaLength = MAX_UA_LENGTH - 1;
                 }
-            }
-
-            if (ualength > 0) {
-                if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
-                    UAcount++; //记录修改包的数量
+                strncpy(UAstr, uapointer + 14, uaLength);
+                UAstr[uaLength] = '\0';
+                size_t uaOffset = uapointer - tcppayload + 14;
+                if (nfq_tcp_mangle_ipv4(pktb, uaOffset, uaLength, UAstr, uaLength) == 1) {
+                    UAcount++;
                 } else {
                     syslog(LOG_ERR, "Mangle packet failed.");
                     pktb_free(pktb);
                     return MNL_CB_ERROR;
                 }
+            } else {
+                syslog(LOG_WARNING, "User-Agent header not terminated with \\r");
             }
         } else {
             noUA = true;
@@ -394,15 +388,17 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    UAstr = malloc(sizeof_buf);
-    memset(UAstr, ' ', sizeof_buf); // 原始UA参数
-    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
-    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
-    memcpy(UAstr, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.6.4279.38 Safari/537.36", 115); // WinOS Common UA
-    //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
-    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
-    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
-    //memcpy(str, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/98.3.3987.872 Safari/605.1.15", 109); // Linux UA
+    if (!UAstr[0]) {
+        size_t uaLength = strlen(DEFAULT_UA);
+        if (uaLength > MAX_UA_LENGTH - 1) {
+            syslog(LOG_WARNING, "Default User-Agent header too long");
+            uaLength = MAX_UA_LENGTH - 1;
+        }
+        strncpy(UAstr, DEFAULT_UA, uaLength);
+        UAstr[uaLength] = '\0';
+    }
+
+    syslog(LOG_INFO, "Modified User-Agent: %s", UAstr);
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
