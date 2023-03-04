@@ -178,6 +178,9 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
 }
 
 static int queue_cb(const struct nlmsghdr *nlh, void *data) {
+    assert(nlh != NULL);
+    assert(data != NULL);
+
     struct nfqnl_msg_packet_hdr *ph = NULL;
     struct nlattr *attr[NFQA_MAX + 1] = {};
     struct nlattr *ctattr[CTA_MAX + 1] = {};
@@ -269,11 +272,11 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
         return MNL_CB_ERROR;
     }
 
-
     tcppkhdl = nfq_tcp_get_hdr(pktb); //获取 tcp header
     tcppkpayload = nfq_tcp_get_payload(tcppkhdl, pktb); //获取 tcp载荷
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
+    // 修改 TCP 数据包中的 User-Agent 头部
     if (tcppkpayload) {
         const char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14);
         if (uapointer != NULL) {
@@ -289,8 +292,18 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 if (uaLength > 0) {
                     if (!UAstr) {
                         UAstr = malloc(uaLength + 1);
+                        if (!UAstr) {
+                            syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
+                            pktb_free(pktb);
+                            return MNL_CB_ERROR;
+                        }
                     } else {
                         UAstr = realloc(UAstr, uaLength + 1);
+                        if (!UAstr) {
+                            syslog(LOG_ERR, "Failed to reallocate memory for UAstr.");
+                            pktb_free(pktb);
+                            return MNL_CB_ERROR;
+                        }
                     }
                     memcpy(UAstr, uapointer + 14, uaLength);
                     UAstr[uaLength] = '\0';
@@ -299,8 +312,11 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                     } else {
                         syslog(LOG_ERR, "Mangle packet failed.");
                         pktb_free(pktb);
+                        free(UAstr);
                         return MNL_CB_ERROR;
                     }
+                } else {
+                    syslog(LOG_WARNING, "User-Agent header length invalid");
                 }
             } else {
                 syslog(LOG_WARNING, "User-Agent header not terminated with \\r");
@@ -409,10 +425,21 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+// 如果未找到 User-Agent 头部，则使用默认值
     if (!UAstr) {
         UAstr = malloc(strlen(DEFAULT_UA) + 1);
+        if (!UAstr) {
+            syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
+            pktb_free(pktb);
+            return MNL_CB_ERROR;
+        }
         memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
     }
+
+// 释放 UAstr 分配的内存块
+    free(UAstr);
+
+    return MNL_CB_OK;
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
