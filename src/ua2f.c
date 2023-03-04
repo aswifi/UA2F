@@ -430,8 +430,7 @@ int main(int argc, char *argv[]) {
         UAstr = malloc(strlen(DEFAULT_UA) + 1);
         if (!UAstr) {
             syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
-            pktb_free(pktb);
-            return MNL_CB_ERROR;
+            return MNL_CB_ERROR; // 修改返回值，不需要释放 pktb
         }
         memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
     }
