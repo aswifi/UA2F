@@ -46,8 +46,8 @@ static time_t start_t, current_t;
 
 static char timestr[60];
 
-const size_t UA_MAX_LENGTH = 256;
-const char *const DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.1.2407.89 Safari/537.36";
+char *UAstr = NULL;
+const char *DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.1.6217.39 Safari/537.36";
 
 static struct ipset *Pipset;
 
@@ -260,87 +260,59 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     tcppkpayload = nfq_tcp_get_payload(tcppkhdl, pktb); //获取 tcp载荷
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
-    char *UAstr = NULL;
-    size_t uaLength = strnlen(DEFAULT_UA, UA_MAX_LENGTH - 1);
-    if (uaLength >= UA_MAX_LENGTH) {
-        syslog(LOG_WARNING, "Default User-Agent header too long");
-        uaLength = UA_MAX_LENGTH - 1;
-    }
-    UAstr = malloc(UA_MAX_LENGTH);
-    if (UAstr == NULL) {
-        syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
-        return MNL_CB_ERROR;
-    }
-    memset(UAstr, ' ', UA_MAX_LENGTH);
-    strncpy_s(UAstr, UA_MAX_LENGTH, DEFAULT_UA, uaLength);
-
     if (tcppkpayload) {
         const char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14);
         if (uapointer != NULL) {
-            size_t uaOffset = uapointer - tcppayload + 14;
+            size_t uaOffset = uapointer - tcppkpayload + 14;
             if (uaOffset >= tcppklen - 2) { // User-Agent: XXX\r\n
                 syslog(LOG_WARNING, "User-Agent has no content");
                 nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
-                free(UAstr); // 释放 UAstr 指向的内存
                 return MNL_CB_OK;
             }
-            const char *endPointer = memchr(uapointer, '\r', tcppklen - (uapointer - tcppayload));
+            const char *endPointer = memchr(uapointer, '\r', tcppklen - (uapointer - tcppkpayload));
             if (endPointer != NULL) {
                 size_t uaLength = endPointer - uapointer - 14;
                 if (uaLength > 0) {
-                    if (uaLength >= UA_MAX_LENGTH) {
-                        syslog(LOG_WARNING, "User-Agent header too long");
-                        uaLength = UA_MAX_LENGTH - 1;
+                    if (!UAstr) {
+                        UAstr = malloc(uaLength + 1);
+                    } else {
+                        UAstr = realloc(UAstr, uaLength + 1);
                     }
-                    strncpy_s(UAstr, UA_MAX_LENGTH, uapointer + 14, uaLength);
-                    size_t actualLength = strnlen(UAstr, UA_MAX_LENGTH);
-                    if (actualLength >= UA_MAX_LENGTH) {
-                        syslog(LOG_ERR, "User-Agent header too long after copying");
-                        free(UAstr); // 释放 UAstr 指向的内存
-                        return MNL_CB_ERROR;
-                    }
+                    memcpy(UAstr, uapointer + 14, uaLength);
+                    UAstr[uaLength] = '\0';
                     if (nfq_tcp_mangle_ipv4(pktb, uaOffset, uaLength, UAstr, uaLength) == 1) {
                         UAcount++; //记录修改包的数量
                     } else {
                         syslog(LOG_ERR, "Mangle packet failed.");
                         pktb_free(pktb);
-                        free(UAstr); // 释放 UAstr 指向的内存
                         return MNL_CB_ERROR;
                     }
                 }
             } else {
-                syslog(LOG_WARNING, "User-Agent header length invalid");
+                syslog(LOG_WARNING, "User-Agent header not terminated with \\r");
             }
         } else {
-            syslog(LOG_WARNING, "User-Agent header not terminated with \\r");
+            noUA = true;
         }
-    } else {
-        noUA = true;
     }
-}
 
-syslog(LOG_DEBUG,
-"Modified User-Agent: %s", UAstr);
-free(UAstr); // 释放 UAstr 指向的内存
-return
-MNL_CB_OK;
+    if (!UAstr) {
+        UAstr = malloc(strlen(DEFAULT_UA) + 1);
+        memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
+    }
 
-nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd
-);
+    nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
 
-if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
-httpcount = UAcount;
-current_t = time(NULL);
-syslog(LOG_INFO,
-"UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s",
-UAcount, tcpcount, UAmark, noUAmark,
-time2str((int)
-difftime(current_t, start_t
-)));
-}
+    if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
+        httpcount = UAcount;
+        current_t = time(NULL);
+        syslog(LOG_INFO,
+               "UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s",
+               UAcount, tcpcount, UAmark, noUAmark,
+               time2str((int) difftime(current_t, start_t)));
+    }
 
-return
-MNL_CB_OK;
+    return MNL_CB_OK;
 }
 
 static void killChild() {
