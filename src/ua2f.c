@@ -52,28 +52,27 @@ const char *DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 static struct ipset *Pipset;
 
 void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
-    register char *cur, *last;
     const char *cl = (const char *) l;
     const char *cs = (const char *) s;
 
-    /* we need something to compare */
-    if (l_len == 0 || s_len == 0)
+    if (l_len == 0 || s_len == 0) {
         return NULL;
+    }
 
-    /* "s" must be smaller or equal to "l" */
-    if (l_len < s_len)
+    if (l_len < s_len) {
         return NULL;
+    }
 
-    /* special case where s_len == 1 */
-    if (s_len == 1)
+    if (s_len == 1) {
         return memchr(l, (int) *cs, l_len);
+    }
 
-    /* the last position where its possible to find "s" in "l" */
-    last = (char *) cl + l_len - s_len;
-
-    for (cur = (char *) cl; cur <= last; cur++)
-        if (cur[0] == cs[0] && strncasecmp(cur, cs, s_len) == 0)
-            return cur;
+    const char *last = cl + l_len - s_len;
+    for (; cl <= last && (cl = memchr(cl, cs[0], last - cl + 1)); cl++) {
+        if (memcmp(cl, cs, s_len) == 0) {
+            return (void *) cl;
+        }
+    }
 
     return NULL;
 }
@@ -102,10 +101,17 @@ static char *time2str(int sec) {
 }
 
 static int parse_attrs(const struct nlattr *attr, void *data) {
-    const struct nlattr **tb = data;
+    assert(attr != NULL);
+    assert(data != NULL);
+
+    struct nlattr **tb = data;
     int type = mnl_attr_get_type(attr);
 
-    tb[type] = attr;
+    if (type >= 0 && type < MNL_SOCKET_BUFFER_SIZE) {
+        if (!mnl_attr_validate(attr, MNL_TYPE_UNSPEC)) {
+            tb[type] = (struct nlattr *)attr;
+        }
+    }
 
     return MNL_CB_OK;
 }
