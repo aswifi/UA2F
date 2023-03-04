@@ -296,11 +296,6 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
         }
     }
 
-    if (!UAstr) {
-        UAstr = malloc(strlen(DEFAULT_UA) + 1);
-        memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
-    }
-
     nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
 
     if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
@@ -407,6 +402,11 @@ int main(int argc, char *argv[]) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at breakpoint 7.");
         exit(EXIT_FAILURE);
+    }
+
+    if (!UAstr) {
+        UAstr = malloc(strlen(DEFAULT_UA) + 1);
+        memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
     }
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
