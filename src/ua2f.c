@@ -394,6 +394,11 @@ int main(int argc, char *argv[]) {
         syslog(LOG_ERR, "Exit at breakpoint 6.");
         exit(EXIT_FAILURE);
     }
+    
+    if (!UAstr) {
+        UAstr = malloc(strlen(DEFAULT_UA) + 1);
+        memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
+    }
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
@@ -402,11 +407,6 @@ int main(int argc, char *argv[]) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at breakpoint 7.");
         exit(EXIT_FAILURE);
-    }
-
-    if (!UAstr) {
-        UAstr = malloc(strlen(DEFAULT_UA) + 1);
-        memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
     }
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
