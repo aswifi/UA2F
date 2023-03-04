@@ -11,7 +11,7 @@ start() {
 }
 
 restart() {
-    service_restart /usr/bin/$APP
+        service_restart /usr/bin/$APP
 }
 
 stop() {
