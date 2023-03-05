@@ -408,7 +408,17 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    UAstr = strdup("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.6.4279.38 Safari/537.36");
+    UAstr = malloc(sizeof_buf);
+    memset(UAstr, ' ', sizeof_buf); // 原始UA参数
+    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
+    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
+    memcpy(UAstr,
+           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.7.6279.45 Safari/537.36",
+           115); // WinOS Common UA
+    //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
+    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
+    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
+    //memcpy(str, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/98.3.3987.872 Safari/605.1.15", 109); // Linux UA
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
