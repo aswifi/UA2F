@@ -137,40 +137,26 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
         nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
     }
 
-
     if (noUA) {
-        if (mark == 1) {
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(16));
-            mnl_attr_nest_end(nlh, nest);
-        }
-
-        if (mark >= 16 && mark <= 40) {
-            setmark = mark + 1;
+        if (mark == 1 || (mark >= 16 && mark <= 40)) {
+            setmark = (mark == 1) ? 16 : (mark + 1);
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
             mnl_attr_nest_end(nlh, nest);
-        }
-
-        if (mark == 41) { // 21 统计确定此连接为不含UA连接
-
+        } else if (mark == 41) { // 21 统计确定此连接为不含UA连接
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(43));
             mnl_attr_nest_end(nlh, nest); // 加 CONNMARK
 
             ipset_parse_line(Pipset, addcmd); //加 ipset 标记
-
             noUAmark++;
         }
-    } else {
-        if (mark != 44) {
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
-            mnl_attr_nest_end(nlh, nest);
-            UAmark++;
-        }
+    } else if (mark != 44) {
+        nest = mnl_attr_nest_start(nlh, NFQA_CT);
+        mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
+        mnl_attr_nest_end(nlh, nest);
+        UAmark++;
     }
-
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
