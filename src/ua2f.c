@@ -216,19 +216,25 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
             mark = ntohl(mnl_attr_get_u32(ctattr[CTA_MARK]));
         } else {
             mark = 1; // no mark 1
-        } // NFQA_CT 一定存在，不存在说明有其他问题
+        }
 
-        if (ctattr[CTA_TUPLE_ORIG]) {
+        if (!ctattr[CTA_TUPLE_ORIG]) {
+            ip = "0.0.0.0";
+        } else {
             mnl_attr_parse_nested(ctattr[CTA_TUPLE_ORIG], parse_attrs, originattr);
-            if (originattr[CTA_TUPLE_IP]) {
+            if (!originattr[CTA_TUPLE_IP]) {
+                ip = "0.0.0.0";
+            } else {
                 mnl_attr_parse_nested(originattr[CTA_TUPLE_IP], parse_attrs, ipattr);
-                if (ipattr[CTA_IP_V4_DST]) {
+                if (!ipattr[CTA_IP_V4_DST]) {
+                    ip = "0.0.0.0";
+                } else {
                     uint32_t tmp = mnl_attr_get_u32(ipattr[CTA_IP_V4_DST]);
                     struct in_addr tmp2 = {.s_addr = tmp};
 
                     ip = inet_ntoa(tmp2);
-                } else {
-                    ip = "0.0.0.0";
+
+
                 }
 
 
@@ -236,16 +242,14 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                     mnl_attr_parse_nested(originattr[CTA_TUPLE_PROTO], parse_attrs, portattr);
                     if (portattr[CTA_PROTO_DST_PORT]) {
                         port = ntohs(mnl_attr_get_u16(portattr[CTA_PROTO_DST_PORT]));
+                        snprintf(addcmd, sizeof(addcmd), "add nohttp %s,%d", ip, port);
                     }
                 }
-                if (port != 0) {
-                    snprintf(addcmd, sizeof(addcmd), "add nohttp %s,%d", ip, port);
-                }
-            } else {
-                ip = "0.0.0.0";
+
+
             }
-        } else {
-            ip = "0.0.0.0";
+
+
         }
     }
 
@@ -258,16 +262,22 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     pktb = pktb_alloc(AF_INET, payload, plen, 0); //IP包
 
     if (!pktb) {
-        syslog(LOG_ERR, "pktb malloc failed");
-        return MNL_CB_ERROR;
+        syslog(LOG_ERR,
+               "pktb malloc failed");
+        return
+                MNL_CB_ERROR;
     }
 
     ippkhdl = nfq_ip_get_hdr(pktb); //获取ip header
 
-    if (nfq_ip_set_transport_header(pktb, ippkhdl) < 0) {
-        syslog(LOG_ERR, "set transport header failed");
+    if (
+            nfq_ip_set_transport_header(pktb, ippkhdl
+            ) < 0) {
+        syslog(LOG_ERR,
+               "set transport header failed");
         pktb_free(pktb);
-        return MNL_CB_ERROR;
+        return
+                MNL_CB_ERROR;
     }
 
 
@@ -284,21 +294,31 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
             char *endpointer = memchr(uapointer + 14, '\r', tcppklen - uaoffset - 2); // 找到 UA 字符串的结尾
 
             if (endpointer == NULL) {
-                syslog(LOG_WARNING, "User-Agent has no content");
+                syslog(LOG_WARNING,
+                       "User-Agent has no content");
 
-                nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
-                return MNL_CB_OK;
+                nfq_send_verdict(ntohs(nfg
+
+                                               ->res_id),
+                                 ntohl((uint32_t)
+                                               ph->packet_id), pktb, mark, noUA, addcmd);
+                return
+                        MNL_CB_OK;
             }
 
             ualength = endpointer - uapointer - 14;
 
 
-            if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
+            if (
+                    nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength
+                    ) == 1) {
                 UAcount++; // 记录修改包的数量
             } else {
-                syslog(LOG_ERR, "Mangle packet failed.");
+                syslog(LOG_ERR,
+                       "Mangle packet failed.");
                 pktb_free(pktb);
-                return MNL_CB_ERROR;
+                return
+                        MNL_CB_ERROR;
 
             }
 
@@ -307,7 +327,11 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
         }
     }
 
-    nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
+    nfq_send_verdict(ntohs(nfg
+
+                                   ->res_id),
+                     ntohl((uint32_t)
+                                   ph->packet_id), pktb, mark, noUA, addcmd);
 
     if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
         httpcount = UAcount;
@@ -319,7 +343,8 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
 
     }
 
-    return MNL_CB_OK;
+    return
+            MNL_CB_OK;
 }
 
 static void killChild() {
@@ -331,7 +356,7 @@ static void killChild() {
 
 int main(int argc, char *argv[]) {
     char *buf;
-    size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE / 2);
+    size_t sizeof_buf = sizeof(buf) - (MNL_SOCKET_BUFFER_SIZE & ~(sizeof(buf) - 1));
     struct nlmsghdr *nlh;
     ssize_t ret;
     unsigned int portid;
@@ -460,6 +485,7 @@ int main(int argc, char *argv[]) {
 
         ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
         if (ret < 0) { //stop at failure
+
 
             perror("mnl_cb_run");
             syslog(LOG_ERR, "Exit at mnl_cb_run.");
