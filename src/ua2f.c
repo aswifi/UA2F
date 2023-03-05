@@ -184,6 +184,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     struct tcphdr *tcppkhdl;
     struct nfgenmsg *nfg;
     char *tcppkpayload;
+    char *uapointer;
     unsigned int tcppklen;
     unsigned int uaoffset = 0;
     unsigned int ualength = 0;
