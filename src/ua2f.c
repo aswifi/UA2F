@@ -283,7 +283,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
 
         char *uaStartPointer = uapointer + 14;
 
-        for (unsigned int i = 0; i < (tcpklen - uaoffset); ++i) {
+        for (unsigned int i = 0; i < (tcppklen - uaoffset); ++i) {
             if (*(uaStartPointer + i) == '\r') {
                 ualength = i;
                 break;
