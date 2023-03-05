@@ -52,18 +52,22 @@ char *UAstr = NULL;
 static struct ipset *Pipset;
 
 void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
+
     const char *cl = (const char *) l;
     const char *cs = (const char *) s;
 
     if (l_len == 0 || s_len == 0) {
+
         return NULL;
     }
 
     if (l_len < s_len) {
+
         return NULL;
     }
 
     if (s_len == 1) {
+
         return memchr(l, (int) *cs, l_len);
     }
 
@@ -95,6 +99,8 @@ static char *time2str(int sec) {
         strftime(timestr, sizeof(timestr), "%H hours, %M minutes and %S seconds", tm_info);
     } else {
         strftime(timestr, sizeof(timestr), "%d days, %H hours, %M minutes and %S seconds", tm_info);
+
+
     }
 
     return timestr;
@@ -271,59 +277,46 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
         return MNL_CB_ERROR;
     }
 
+
     tcppkhdl = nfq_tcp_get_hdr(pktb); //获取 tcp header
     tcppkpayload = nfq_tcp_get_payload(tcppkhdl, pktb); //获取 tcp载荷
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
     // 修改 TCP 数据包中的 User-Agent 头部
-    if (tcppkpayload) {
-        const char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14);
-        if (uapointer != NULL) {
-            size_t uaOffset = uapointer - tcppkpayload + 14;
-            if (uaOffset >= tcppklen - 2) { // User-Agent: XXX\r\n
-                syslog(LOG_WARNING, "User-Agent has no content");
-                nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
-                return MNL_CB_OK;
-            }
-            const char *endPointer = memchr(uapointer, '\r', tcppklen - (uapointer - tcppkpayload));
-            if (endPointer != NULL) {
-                size_t uaLength = endPointer - uapointer - 14;
-                if (uaLength > 0) {
-                    if (!UAstr) {
-                        UAstr = malloc(uaLength + 1);
-                        //if (!UAstr) {
-                        //   syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
-                        //    pktb_free(pktb);
-                        //    return MNL_CB_ERROR;
-                        //}
-                    } else {
-                        UAstr = realloc(UAstr, uaLength + 1);
-                        //if (!UAstr) {
-                        //    syslog(LOG_ERR, "Failed to reallocate memory for UAstr.");
-                        //    pktb_free(pktb);
-                        //    return MNL_CB_ERROR;
-                        //}
-                    }
-                    memcpy(UAstr, uapointer + 14, uaLength);
-                    UAstr[uaLength] = '\0';
-                    if (nfq_tcp_mangle_ipv4(pktb, uaOffset, uaLength, UAstr, uaLength) == 1) {
-                        UAcount++; //记录修改包的数量
-                    } else {
-                        syslog(LOG_ERR, "Mangle packet failed.");
-                        pktb_free(pktb);
-                        //free(UAstr);
-                        return MNL_CB_ERROR;
-                    }
-                } else {
-                    syslog(LOG_WARNING, "User-Agent header length invalid");
-                }
-            } else {
-                syslog(LOG_WARNING, "User-Agent header not terminated with \\r");
-            }
-        } else {
-            noUA = true;
+    if (tcppkpayload && (uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14))) {
+
+
+        uaoffset = uapointer - tcppkpayload + 14; // 应该指向 UA 的第一个字符
+
+        if (uaoffset >= tcppklen - 2) { // User-Agent: XXX\r\n
+            syslog(LOG_WARNING, "User-Agent has no content");
+            // https://github.com/Zxilly/UA2F/pull/42#issue-1159773997
+            nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
+            return MNL_CB_OK;
         }
+
+        char *uaStartPointer = uapointer + 14;
+
+        for (unsigned int i = 0; i < (tcpklen - uaoffset); ++i) {
+            if (*(uaStartPointer + i) == '\r') {
+                ualength = i;
+                break;
+            }
+        }
+
+        if (ualength > 0) {
+            if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
+                UAcount++; //记录修改包的数量
+            } else {
+                syslog(LOG_ERR, "Mangle packet failed.");
+                pktb_free(pktb);
+                return MNL_CB_ERROR;
+            }
+        }
+    } else {
+        noUA = true;
     }
+
 
     nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
 
@@ -428,7 +421,9 @@ int main(int argc, char *argv[]) {
     memset(UAstr, ' ', sizeof_buf); // 原始UA参数
     //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
     //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
-    memcpy(UAstr, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.6.4279.38 Safari/537.36", 115); // WinOS Common UA
+    memcpy(UAstr,
+           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.6.4279.38 Safari/537.36",
+           115); // WinOS Common UA
     //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
     //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
     //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
@@ -468,11 +463,14 @@ int main(int argc, char *argv[]) {
         if (ret < 0) {
             perror("mnl_socket_recvfrom");
             break;
+
         }
         ret = mnl_cb_run(buf, ret, 0, portid, queue_cb, NULL);
         if (ret < 0) {
+
             perror("mnl_cb_run");
             break;
+
         }
     }
     mnl_socket_close(nl);
