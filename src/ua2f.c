@@ -224,24 +224,28 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 mnl_attr_parse_nested(originattr[CTA_TUPLE_IP], parse_attrs, ipattr);
                 if (ipattr[CTA_IP_V4_DST]) {
                     uint32_t tmp = mnl_attr_get_u32(ipattr[CTA_IP_V4_DST]);
-                    struct in_addr tmp2;
-                    tmp2.s_addr = tmp;
+                    struct in_addr tmp2 = {.s_addr = tmp};
+
                     ip = inet_ntoa(tmp2);
                 } else {
                     ip = "0.0.0.0";
                 }
+
+
+                if (originattr[CTA_TUPLE_PROTO]) {
+                    mnl_attr_parse_nested(originattr[CTA_TUPLE_PROTO], parse_attrs, portattr);
+                    if (portattr[CTA_PROTO_DST_PORT]) {
+                        port = ntohs(mnl_attr_get_u16(portattr[CTA_PROTO_DST_PORT]));
+                    }
+                }
+                if (port != 0) {
+                    snprintf(addcmd, sizeof(addcmd), "add nohttp %s,%d", ip, port);
+                }
             } else {
                 ip = "0.0.0.0";
             }
-            if (originattr[CTA_TUPLE_PROTO]) {
-                mnl_attr_parse_nested(originattr[CTA_TUPLE_PROTO], parse_attrs, portattr);
-                if (portattr[CTA_PROTO_DST_PORT]) {
-                    port = ntohs(mnl_attr_get_u16(portattr[CTA_PROTO_DST_PORT]));
-                }
-            }
-            if (ip && port != 0) {
-                sprintf(addcmd, "add nohttp %s,%d", ip, port);
-            }
+        } else {
+            ip = "0.0.0.0";
         }
     }
 
@@ -445,8 +449,8 @@ int main(int argc, char *argv[]) {
     syslog(LOG_NOTICE, "UA2F has inited successful.");
 
     while (true) {
-        ssize_t ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
-        if (ret == -1) {
+        ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
+        if (ret == -1) { //stop at failure
 
             perror("mnl_socket_recvfrom");
             syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
@@ -455,8 +459,7 @@ int main(int argc, char *argv[]) {
 
 
         ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
-        if (ret < 0) {
-
+        if (ret < 0) { //stop at failure
 
             perror("mnl_cb_run");
             syslog(LOG_ERR, "Exit at mnl_cb_run.");
