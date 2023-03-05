@@ -8,7 +8,6 @@
 
 #include "ipset_hook.h"
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +18,6 @@
 #include <syslog.h>
 #include <signal.h>
 #include <arpa/inet.h>
-
 
 #include <libmnl/libmnl.h>
 
@@ -52,6 +50,7 @@ char *UAstr = NULL;
 static struct ipset *Pipset;
 
 void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
+	
     register char *cur, *last;
     const char *cl = (const char *) l;
     const char *cs = (const char *) s;
@@ -79,6 +78,7 @@ void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
 }
 
 static char *time2str(int sec) {
+	
     static const int minute = 60;
     static const int hour = 60 * minute;
     static const int day = 24 * hour;
@@ -94,15 +94,12 @@ static char *time2str(int sec) {
     } else {
         sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / day, sec % day / hour,
                 sec % hour / minute, sec % minute);
-
-
     }
 
     return timestr;
 }
 
-static int parse_attrs(const struct nlattr *attr, void *data) {
-
+    static int parse_attrs(const struct nlattr *attr, void *data) {
 
     const struct nlattr **tb = data;
     int type = mnl_attr_get_type(attr);
@@ -127,7 +124,6 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
         nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
     }
 
-
     if (noUA) {
         if (mark >= 1 && mark <= 40) {
             if (mark == 1) {
@@ -135,44 +131,34 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
             } else {
                 setmark = mark + 1; // 其他不含 UA 的流量
             }
-
-
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
             mnl_attr_nest_end(nlh, nest);
         } else if (mark == 41) {
-
-
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(43)); // 不含 UA 的连接
             mnl_attr_nest_end(nlh, nest);
-
             ipset_parse_line(Pipset, addcmd); // 添加 IPSET 标记
-
             noUAmark++;
         }
     } else if (mark != 44) {
-
         nest = mnl_attr_nest_start(nlh, NFQA_CT);
         mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
         mnl_attr_nest_end(nlh, nest);
         UAmark++;
-
     }
-
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at breakpoint 1.");
         exit(EXIT_FAILURE);
     }
-
+    
     tcpcount++;
     pktb_free(pktb);
 }
 
 static int queue_cb(const struct nlmsghdr *nlh, void *data) {
-
 
     struct nfqnl_msg_packet_hdr *ph = NULL;
     struct nlattr *attr[NFQA_MAX + 1] = {};
@@ -231,10 +217,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 } else {
                     uint32_t tmp = mnl_attr_get_u32(ipattr[CTA_IP_V4_DST]);
                     struct in_addr tmp2 = {.s_addr = tmp};
-
                     ip = inet_ntoa(tmp2);
-
-
                 }
                 if (originattr[CTA_TUPLE_PROTO]) {
                     mnl_attr_parse_nested(originattr[CTA_TUPLE_PROTO], parse_attrs, portattr);
@@ -242,25 +225,14 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                         port = ntohs(mnl_attr_get_u16(portattr[CTA_PROTO_DST_PORT]));
                         snprintf(addcmd, sizeof(addcmd), "add nohttp %s,%d", ip, port);
                     }
-
-
                 }
-
-
             }
-
-
         }
-
-
     }
 
-
     ph = mnl_attr_get_payload(attr[NFQA_PACKET_HDR]);
-
     plen = mnl_attr_get_payload_len(attr[NFQA_PAYLOAD]);
     payload = mnl_attr_get_payload(attr[NFQA_PAYLOAD]);
-
 
     pktb = pktb_alloc(AF_INET, payload, plen, 0); //IP包
 
@@ -277,7 +249,6 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
         return MNL_CB_ERROR;
     }
 
-
     tcppkhdl = nfq_tcp_get_hdr(pktb); //获取 tcp header
     tcppkpayload = nfq_tcp_get_payload(tcppkhdl, pktb); //获取 tcp载荷
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
@@ -292,13 +263,11 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
 
             if (endpointer == NULL) {
                 syslog(LOG_WARNING, "User-Agent has no content");
-
                 nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
                 return MNL_CB_OK;
             }
 
             ualength = endpointer - uapointer - 14;
-
 
             if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
                 UAcount++; // 记录修改包的数量
@@ -306,11 +275,8 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 syslog(LOG_ERR, "Mangle packet failed.");
                 pktb_free(pktb);
                 return MNL_CB_ERROR;
-
             }
         } else {
-
-
             noUA = true;
         }
     }
@@ -324,9 +290,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
         syslog(LOG_INFO,
                "UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s",
                UAcount, tcpcount, UAmark, noUAmark, timestr);
-
     }
-
     return MNL_CB_OK;
 }
 
@@ -338,14 +302,13 @@ static void killChild() {
 }
 
 int main(int argc, char *argv[]) {
+	
     char *buf;
     size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE / 2);
     struct nlmsghdr *nlh;
     ssize_t ret;
     unsigned int portid;
-
     int errcount = 0;
-
     signal(SIGTERM, killChild);
 
     for (int errcount = 0; errcount <= 10; ++errcount) {
@@ -361,21 +324,17 @@ int main(int argc, char *argv[]) {
         } else {
             int status;
             if (waitpid(child_pid, &status, 0) == -1) {
-
-
                 syslog(LOG_ERR, "Child suicide.");
             } else {
                 syslog(LOG_ERR, "Meet fatal error.[%d] dies by %d", child_pid, status);
             }
         }
         if (errcount == 10) {
-
             syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
             syslog(LOG_ERR, "Exit with too many error.");
             exit(EXIT_FAILURE);
         }
     }
-
 
     openlog("UA2F", LOG_PID, LOG_SYSLOG);
 
@@ -444,7 +403,6 @@ int main(int argc, char *argv[]) {
     mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_MASK,
                            htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
 
-
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
         syslog(LOG_ERR, "Exit at mnl_socket_send.");
@@ -465,11 +423,8 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
 
-
         ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
         if (ret < 0) { //stop at failure
-
-
             perror("mnl_cb_run");
             syslog(LOG_ERR, "Exit at mnl_cb_run.");
             exit(EXIT_FAILURE);
