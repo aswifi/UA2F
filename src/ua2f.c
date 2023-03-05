@@ -48,7 +48,6 @@ static time_t start_t, current_t;
 static char timestr[60];
 
 char *UAstr = NULL;
-const char *DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.1.6217.39 Safari/537.36";
 
 static struct ipset *Pipset;
 
@@ -292,18 +291,18 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 if (uaLength > 0) {
                     if (!UAstr) {
                         UAstr = malloc(uaLength + 1);
-                        if (!UAstr) {
-                            syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
-                            pktb_free(pktb);
-                            return MNL_CB_ERROR;
-                        }
+                        //if (!UAstr) {
+                        //   syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
+                        //    pktb_free(pktb);
+                        //    return MNL_CB_ERROR;
+                        //}
                     } else {
                         UAstr = realloc(UAstr, uaLength + 1);
-                        if (!UAstr) {
-                            syslog(LOG_ERR, "Failed to reallocate memory for UAstr.");
-                            pktb_free(pktb);
-                            return MNL_CB_ERROR;
-                        }
+                        //if (!UAstr) {
+                        //    syslog(LOG_ERR, "Failed to reallocate memory for UAstr.");
+                        //    pktb_free(pktb);
+                        //    return MNL_CB_ERROR;
+                        //}
                     }
                     memcpy(UAstr, uapointer + 14, uaLength);
                     UAstr[uaLength] = '\0';
@@ -312,7 +311,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                     } else {
                         syslog(LOG_ERR, "Mangle packet failed.");
                         pktb_free(pktb);
-                        free(UAstr);
+                        //free(UAstr);
                         return MNL_CB_ERROR;
                     }
                 } else {
@@ -425,20 +424,15 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-// 如果未找到 User-Agent 头部，则使用默认值
-    if (!UAstr) {
-        UAstr = malloc(strlen(DEFAULT_UA) + 1);
-        if (!UAstr) {
-            syslog(LOG_ERR, "Failed to allocate memory for UAstr.");
-            return MNL_CB_ERROR; // 修改返回值，不需要释放 pktb
-        }
-        memcpy(UAstr, DEFAULT_UA, strlen(DEFAULT_UA) + 1);
-    }
-
-// 释放 UAstr 分配的内存块
-    free(UAstr);
-
-    return MNL_CB_OK;
+    UAstr = malloc(sizeof_buf);
+    memset(UAstr, ' ', sizeof_buf); // 原始UA参数
+    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
+    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
+    memcpy(UAstr, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.6.4279.38 Safari/537.36", 115); // WinOS Common UA
+    //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
+    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
+    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
+    //memcpy(str, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/98.3.3987.872 Safari/605.1.15", 109); // Linux UA
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
