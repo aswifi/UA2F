@@ -413,9 +413,8 @@ int main(int argc, char *argv[]) {
     size_t len = strlen(default_ua);
     UAstr = malloc(len + 1);
 
-// 将 UA 参数初始化为默认值，并使用空字符作为终止符
-    memcpy(UAstr, default_ua, len);
-    UAstr[len] = '\0';
+    // 将 UA 参数初始化为默认值，并使用空字符作为终止符
+    memcpy(UAstr, default_ua, len + 1);
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
