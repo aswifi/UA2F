@@ -297,6 +297,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 return MNL_CB_ERROR;
 
             }
+
         } else {
             noUA = true;
         }
@@ -307,10 +308,11 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
         httpcount = UAcount;
         current_t = time(NULL);
+        char *timestr = time2str((int) difftime(current_t, start_t));
         syslog(LOG_INFO,
                "UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s",
-               UAcount, tcpcount, UAmark, noUAmark,
-               time2str((int) difftime(current_t, start_t)));
+               UAcount, tcpcount, UAmark, noUAmark, timestr);
+
     }
 
     return MNL_CB_OK;
@@ -334,28 +336,28 @@ int main(int argc, char *argv[]) {
 
     signal(SIGTERM, killChild);
 
-    while (true) {
-        child_status = fork();
-        if (child_status < 0) {
+    for (int errcount = 0; errcount <= 10; ++errcount) {
+        pid_t child_pid = fork();
+        if (child_pid == -1) {
             syslog(LOG_ERR, "Failed to give birth.");
             syslog(LOG_ERR, "Exit at fork.");
             exit(EXIT_FAILURE);
-        } else if (child_status == 0) {
+        }
+        if (child_pid == 0) {
             syslog(LOG_NOTICE, "UA2F processor start at [%d].", getpid());
             break;
         } else {
-            syslog(LOG_NOTICE, "Try to start UA2F processor at [%d].", child_status);
-            int deadstat;
-            int deadpid;
-            deadpid = wait(&deadstat);
-            if (deadpid == -1) {
+            int status;
+            if (waitpid(child_pid, &status, 0) == -1) {
+
+
                 syslog(LOG_ERR, "Child suicide.");
             } else {
-                syslog(LOG_ERR, "Meet fatal error.[%d] dies by %d", deadpid, deadstat);
+                syslog(LOG_ERR, "Meet fatal error.[%d] dies by %d", child_pid, status);
             }
         }
-        errcount++;
-        if (errcount > 10) {
+        if (errcount == 10) {
+
             syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
             syslog(LOG_ERR, "Exit with too many error.");
             exit(EXIT_FAILURE);
