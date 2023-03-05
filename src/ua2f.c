@@ -92,7 +92,10 @@ static char *time2str(int sec) {
     } else if (sec <= day) {
         sprintf(timestr, "%d hours, %d minutes and %d seconds", sec / hour, sec % hour / minute, sec % minute);
     } else {
-        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / day, sec % day / hour, sec % hour / minute, sec % minute);
+        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / day, sec % day / hour,
+                sec % hour / minute, sec % minute);
+
+
     }
 
     return timestr;
@@ -124,6 +127,7 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
         nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
     }
 
+
     if (noUA) {
         if (mark >= 1 && mark <= 40) {
             if (mark == 1) {
@@ -132,23 +136,30 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
                 setmark = mark + 1; // 其他不含 UA 的流量
             }
 
+
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
             mnl_attr_nest_end(nlh, nest);
         } else if (mark == 41) {
+
+
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(43)); // 不含 UA 的连接
             mnl_attr_nest_end(nlh, nest);
 
             ipset_parse_line(Pipset, addcmd); // 添加 IPSET 标记
+
             noUAmark++;
         }
     } else if (mark != 44) {
+
         nest = mnl_attr_nest_start(nlh, NFQA_CT);
         mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
         mnl_attr_nest_end(nlh, nest);
         UAmark++;
+
     }
+
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
@@ -261,36 +272,30 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
     if (tcppkpayload) {
-        char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14); // 找到指向 \r 的指针
-
+        char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14); // 找到指向 UA 的第一个字符的指针
 
         if (uapointer) {
-            uaoffset = uapointer - tcppkpayload + 14; // 应该指向 UA 的第一个字符
+            uaoffset = uapointer - tcppkpayload + 14; // 计算在 TCP 数据包中的偏移量
 
-            if (uaoffset >= tcppklen - 2) { // User-Agent: XXX\r\n
+            char *endpointer = memchr(uapointer + 14, '\r', tcppklen - uaoffset - 2); // 找到 UA 字符串的结尾
+
+            if (endpointer == NULL) {
                 syslog(LOG_WARNING, "User-Agent has no content");
-                // https://github.com/Zxilly/UA2F/pull/42#issue-1159773997
+
                 nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
                 return MNL_CB_OK;
             }
 
-            char *uaStartPointer = uapointer + 14;
-            const unsigned int uaLengthBound = tcppklen - uaoffset;
-            for (unsigned int i = 0; i < uaLengthBound; ++i) {
-                if (*(uaStartPointer + i) == '\r') {
-                    ualength = i;
-                    break;
-                }
-            }
+            ualength = endpointer - uapointer - 14;
 
-            if (ualength > 0) {
-                if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
-                    UAcount++; //记录修改包的数量
-                } else {
-                    syslog(LOG_ERR, "Mangle packet failed.");
-                    pktb_free(pktb);
-                    return MNL_CB_ERROR;
-                }
+
+            if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
+                UAcount++; // 记录修改包的数量
+            } else {
+                syslog(LOG_ERR, "Mangle packet failed.");
+                pktb_free(pktb);
+                return MNL_CB_ERROR;
+
             }
         } else {
             noUA = true;
