@@ -444,9 +444,9 @@ int main(int argc, char *argv[]) {
 
     syslog(LOG_NOTICE, "UA2F has inited successful.");
 
-    while (1) {
-        ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
-        if (ret == -1) { //stop at failure
+    while (true) {
+        ssize_t ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
+        if (ret == -1) {
 
             perror("mnl_socket_recvfrom");
             syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
@@ -455,8 +455,8 @@ int main(int argc, char *argv[]) {
 
 
         ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
-        if (ret < 0) { //stop at failure
-            // printf("errno=%d\n", errno);
+        if (ret < 0) {
+
 
             perror("mnl_cb_run");
             syslog(LOG_ERR, "Exit at mnl_cb_run.");
