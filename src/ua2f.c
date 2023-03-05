@@ -34,7 +34,7 @@
 
 int child_status;
 
-static struct mnl_socket* nl;
+static struct mnl_socket *nl;
 static const int queue_number = 10010;
 
 static long long UAcount = 0;
@@ -47,463 +47,428 @@ static time_t start_t, current_t;
 
 static char timestr[60];
 
-char* UAstr = NULL;
+char *UAstr = NULL;
 
-static struct ipset* Pipset;
+static struct ipset *Pipset;
 
-void* memncasemem(const void* l, size_t l_len, const void* s, size_t s_len) {
-	register char* cur, * last;
-	const char* cl = (const char*)l;
-	const char* cs = (const char*)s;
+void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
+    register char *cur, *last;
+    const char *cl = (const char *) l;
+    const char *cs = (const char *) s;
 
-	/* we need something to compare */
-	if (l_len == 0 || s_len == 0)
-		return NULL;
+    /* we need something to compare */
+    if (l_len == 0 || s_len == 0)
+        return NULL;
 
-	/* "s" must be smaller or equal to "l" */
-	if (l_len < s_len)
-		return NULL;
+    /* "s" must be smaller or equal to "l" */
+    if (l_len < s_len)
+        return NULL;
 
-	/* special case where s_len == 1 */
-	if (s_len == 1)
-		return memchr(l, (int)*cs, l_len);
+    /* special case where s_len == 1 */
+    if (s_len == 1)
+        return memchr(l, (int) *cs, l_len);
 
-	/* the last position where its possible to find "s" in "l" */
-	last = (char*)cl + l_len - s_len;
+    /* the last position where its possible to find "s" in "l" */
+    last = (char *) cl + l_len - s_len;
 
-	for (cur = (char*)cl; cur <= last; cur++)
-		if (tolower(cur[0]) == tolower(cs[0]) && strncasecmp(cur, cs, s_len) == 0)
-			return cur;
+    for (cur = (char *) cl; cur <= last; cur++)
+        if (tolower(cur[0]) == tolower(cs[0]) && strncasecmp(cur, cs, s_len) == 0)
+            return cur;
 
-	return NULL;
+    return NULL;
 }
 
-static char* time2str(int sec) {
-	static const int minute = 60;
-	static const int hour = 60 * minute;
-	static const int day = 24 * hour;
+static char *time2str(int sec) {
+    static const int minute = 60;
+    static const int hour = 60 * minute;
+    static const int day = 24 * hour;
 
-	memset(timestr, 0, sizeof(timestr));
+    memset(timestr, 0, sizeof(timestr));
 
-	if (sec <= minute) {
-		sprintf(timestr, "%d seconds", sec);
-	}
-	else if (sec <= hour) {
-		sprintf(timestr, "%d minutes and %d seconds", sec / minute, sec % minute);
-	}
-	else if (sec <= day) {
-		sprintf(timestr, "%d hours, %d minutes and %d seconds", sec / hour, sec % hour / minute, sec % minute);
-	}
-	else {
-		sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / day, sec % day / hour,
-			sec % hour / minute, sec % minute);
+    if (sec <= minute) {
+        sprintf(timestr, "%d seconds", sec);
+    } else if (sec <= hour) {
+        sprintf(timestr, "%d minutes and %d seconds", sec / minute, sec % minute);
+    } else if (sec <= day) {
+        sprintf(timestr, "%d hours, %d minutes and %d seconds", sec / hour, sec % hour / minute, sec % minute);
+    } else {
+        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / day, sec % day / hour,
+                sec % hour / minute, sec % minute);
 
 
-	}
+    }
 
-	return timestr;
+    return timestr;
 }
 
-static int parse_attrs(const struct nlattr* attr, void* data) {
+static int parse_attrs(const struct nlattr *attr, void *data) {
 
 
-	const struct nlattr** tb = data;
-	int type = mnl_attr_get_type(attr);
+    const struct nlattr **tb = data;
+    int type = mnl_attr_get_type(attr);
 
-	tb[type] = attr;
+    tb[type] = attr;
 
-	return MNL_CB_OK;
+    return MNL_CB_OK;
 }
 
 static void
-nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff* pktb, uint32_t mark, bool noUA,
-	char addcmd[50]) { // http mark = 24, ukn mark = 16-20, no http mark = 23
-	char buf[0xffff + (MNL_SOCKET_BUFFER_SIZE / 2)];
-	struct nlmsghdr* nlh;
-	struct nlattr* nest;
-	uint32_t setmark;
+nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mark, bool noUA,
+                 char addcmd[50]) { // http mark = 24, ukn mark = 16-20, no http mark = 23
+    char buf[0xffff + (MNL_SOCKET_BUFFER_SIZE / 2)];
+    struct nlmsghdr *nlh;
+    struct nlattr *nest;
+    uint32_t setmark;
 
-	nlh = nfq_nlmsg_put(buf, NFQNL_MSG_VERDICT, queue_num);
-	nfq_nlmsg_verdict_put(nlh, (int)id, NF_ACCEPT);
+    nlh = nfq_nlmsg_put(buf, NFQNL_MSG_VERDICT, queue_num);
+    nfq_nlmsg_verdict_put(nlh, (int) id, NF_ACCEPT);
 
-	if (pktb_mangled(pktb)) {
-		nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
-	}
-
-
-	if (noUA) {
-		if (mark >= 1 && mark <= 40) {
-			if (mark == 1) {
-				setmark = 16; // 不含 UA 的 HTTP 流量
-			}
-			else {
-				setmark = mark + 1; // 其他不含 UA 的流量
-			}
+    if (pktb_mangled(pktb)) {
+        nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
+    }
 
 
-			nest = mnl_attr_nest_start(nlh, NFQA_CT);
-			mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
-			mnl_attr_nest_end(nlh, nest);
-		}
-		else if (mark == 41) {
+    if (noUA) {
+        if (mark >= 1 && mark <= 40) {
+            if (mark == 1) {
+                setmark = 16; // 不含 UA 的 HTTP 流量
+            } else {
+                setmark = mark + 1; // 其他不含 UA 的流量
+            }
 
 
-			nest = mnl_attr_nest_start(nlh, NFQA_CT);
-			mnl_attr_put_u32(nlh, CTA_MARK, htonl(43)); // 不含 UA 的连接
-			mnl_attr_nest_end(nlh, nest);
-
-			ipset_parse_line(Pipset, addcmd); // 添加 IPSET 标记
-
-			noUAmark++;
-		}
-	}
-	else if (mark != 44) {
-
-		nest = mnl_attr_nest_start(nlh, NFQA_CT);
-		mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
-		mnl_attr_nest_end(nlh, nest);
-		UAmark++;
-
-	}
+            nest = mnl_attr_nest_start(nlh, NFQA_CT);
+            mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
+            mnl_attr_nest_end(nlh, nest);
+        } else if (mark == 41) {
 
 
-	if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
-		perror("mnl_socket_send");
-		syslog(LOG_ERR, "Exit at breakpoint 1.");
-		exit(EXIT_FAILURE);
-	}
+            nest = mnl_attr_nest_start(nlh, NFQA_CT);
+            mnl_attr_put_u32(nlh, CTA_MARK, htonl(43)); // 不含 UA 的连接
+            mnl_attr_nest_end(nlh, nest);
 
-	tcpcount++;
-	pktb_free(pktb);
+            ipset_parse_line(Pipset, addcmd); // 添加 IPSET 标记
+
+            noUAmark++;
+        }
+    } else if (mark != 44) {
+
+        nest = mnl_attr_nest_start(nlh, NFQA_CT);
+        mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
+        mnl_attr_nest_end(nlh, nest);
+        UAmark++;
+
+    }
+
+
+    if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
+        perror("mnl_socket_send");
+        syslog(LOG_ERR, "Exit at breakpoint 1.");
+        exit(EXIT_FAILURE);
+    }
+
+    tcpcount++;
+    pktb_free(pktb);
 }
 
-static int queue_cb(const struct nlmsghdr* nlh, void* data) {
+static int queue_cb(const struct nlmsghdr *nlh, void *data) {
 
 
-	struct nfqnl_msg_packet_hdr* ph = NULL;
-	struct nlattr* attr[NFQA_MAX + 1] = {};
-	struct nlattr* ctattr[CTA_MAX + 1] = {};
-	struct nlattr* originattr[CTA_TUPLE_MAX + 1] = {};
-	struct nlattr* ipattr[CTA_IP_MAX + 1] = {};
-	struct nlattr* portattr[CTA_PROTO_MAX + 1] = {};
-	uint16_t plen;
-	struct pkt_buff* pktb;
-	struct iphdr* ippkhdl;
-	struct tcphdr* tcppkhdl;
-	struct nfgenmsg* nfg;
-	char* tcppkpayload;
+    struct nfqnl_msg_packet_hdr *ph = NULL;
+    struct nlattr *attr[NFQA_MAX + 1] = {};
+    struct nlattr *ctattr[CTA_MAX + 1] = {};
+    struct nlattr *originattr[CTA_TUPLE_MAX + 1] = {};
+    struct nlattr *ipattr[CTA_IP_MAX + 1] = {};
+    struct nlattr *portattr[CTA_PROTO_MAX + 1] = {};
+    uint16_t plen;
+    struct pkt_buff *pktb;
+    struct iphdr *ippkhdl;
+    struct tcphdr *tcppkhdl;
+    struct nfgenmsg *nfg;
+    char *tcppkpayload;
 
-	unsigned int tcppklen;
-	unsigned int uaoffset = 0;
-	unsigned int ualength = 0;
-	void* payload;
-	uint32_t mark = 0;
-	bool noUA = false;
-	char* ip;
-	uint16_t port = 0;
-	char addcmd[50];
+    unsigned int tcppklen;
+    unsigned int uaoffset = 0;
+    unsigned int ualength = 0;
+    void *payload;
+    uint32_t mark = 0;
+    bool noUA = false;
+    char *ip;
+    uint16_t port = 0;
+    char addcmd[50];
 
-	if (nfq_nlmsg_parse(nlh, attr) < 0) {
-		perror("problems parsing");
-		return MNL_CB_ERROR;
-	}
+    if (nfq_nlmsg_parse(nlh, attr) < 0) {
+        perror("problems parsing");
+        return MNL_CB_ERROR;
+    }
 
-	nfg = mnl_nlmsg_get_payload(nlh);
+    nfg = mnl_nlmsg_get_payload(nlh);
 
-	if (attr[NFQA_PACKET_HDR] == NULL) {
-		syslog(LOG_ERR, "metaheader not set");
-		return MNL_CB_ERROR;
-	}
+    if (attr[NFQA_PACKET_HDR] == NULL) {
+        syslog(LOG_ERR, "metaheader not set");
+        return MNL_CB_ERROR;
+    }
 
-	if (attr[NFQA_CT]) {
-		mnl_attr_parse_nested(attr[NFQA_CT], parse_attrs, ctattr);
+    if (attr[NFQA_CT]) {
+        mnl_attr_parse_nested(attr[NFQA_CT], parse_attrs, ctattr);
 
-		if (ctattr[CTA_MARK]) {
-			mark = ntohl(mnl_attr_get_u32(ctattr[CTA_MARK]));
-		}
-		else {
-			mark = 1; // no mark 1
-		}
+        if (ctattr[CTA_MARK]) {
+            mark = ntohl(mnl_attr_get_u32(ctattr[CTA_MARK]));
+        } else {
+            mark = 1; // no mark 1
+        }
 
-		if (!ctattr[CTA_TUPLE_ORIG]) {
-			ip = "0.0.0.0";
-		}
-		else {
-			mnl_attr_parse_nested(ctattr[CTA_TUPLE_ORIG], parse_attrs, originattr);
-			if (!originattr[CTA_TUPLE_IP]) {
-				ip = "0.0.0.0";
-			}
-			else {
-				mnl_attr_parse_nested(originattr[CTA_TUPLE_IP], parse_attrs, ipattr);
-				if (!ipattr[CTA_IP_V4_DST]) {
-					ip = "0.0.0.0";
-				}
-				else {
-					uint32_t tmp = mnl_attr_get_u32(ipattr[CTA_IP_V4_DST]);
-					struct in_addr tmp2 = { .s_addr = tmp };
+        if (!ctattr[CTA_TUPLE_ORIG]) {
+            ip = "0.0.0.0";
+        } else {
+            mnl_attr_parse_nested(ctattr[CTA_TUPLE_ORIG], parse_attrs, originattr);
+            if (!originattr[CTA_TUPLE_IP]) {
+                ip = "0.0.0.0";
+            } else {
+                mnl_attr_parse_nested(originattr[CTA_TUPLE_IP], parse_attrs, ipattr);
+                if (!ipattr[CTA_IP_V4_DST]) {
+                    ip = "0.0.0.0";
+                } else {
+                    uint32_t tmp = mnl_attr_get_u32(ipattr[CTA_IP_V4_DST]);
+                    struct in_addr tmp2 = {.s_addr = tmp};
 
-					ip = inet_ntoa(tmp2);
+                    ip = inet_ntoa(tmp2);
 
 
-				}
+                }
+                if (originattr[CTA_TUPLE_PROTO]) {
+                    mnl_attr_parse_nested(originattr[CTA_TUPLE_PROTO], parse_attrs, portattr);
+                    if (portattr[CTA_PROTO_DST_PORT]) {
+                        port = ntohs(mnl_attr_get_u16(portattr[CTA_PROTO_DST_PORT]));
+                        snprintf(addcmd, sizeof(addcmd), "add nohttp %s,%d", ip, port);
+                    }
 
 
-				if (originattr[CTA_TUPLE_PROTO]) {
-					mnl_attr_parse_nested(originattr[CTA_TUPLE_PROTO], parse_attrs, portattr);
-					if (portattr[CTA_PROTO_DST_PORT]) {
-						port = ntohs(mnl_attr_get_u16(portattr[CTA_PROTO_DST_PORT]));
-						snprintf(addcmd, sizeof(addcmd), "add nohttp %s,%d", ip, port);
-					}
-				}
+                }
 
 
-			}
+            }
 
 
-		}
-	}
+        }
+    }
 
-	ph = mnl_attr_get_payload(attr[NFQA_PACKET_HDR]);
+    ph = mnl_attr_get_payload(attr[NFQA_PACKET_HDR]);
 
-	plen = mnl_attr_get_payload_len(attr[NFQA_PAYLOAD]);
-	payload = mnl_attr_get_payload(attr[NFQA_PAYLOAD]);
-
-
-	pktb = pktb_alloc(AF_INET, payload, plen, 0); //IP包
-
-	if (!pktb) {
-		syslog(LOG_ERR,
-			"pktb malloc failed");
-		return
-			MNL_CB_ERROR;
-	}
-
-	ippkhdl = nfq_ip_get_hdr(pktb); //获取ip header
-
-	if (
-		nfq_ip_set_transport_header(pktb, ippkhdl
-		) < 0) {
-		syslog(LOG_ERR,
-			"set transport header failed");
-		pktb_free(pktb);
-		return
-			MNL_CB_ERROR;
-	}
+    plen = mnl_attr_get_payload_len(attr[NFQA_PAYLOAD]);
+    payload = mnl_attr_get_payload(attr[NFQA_PAYLOAD]);
 
 
-	tcppkhdl = nfq_tcp_get_hdr(pktb); //获取 tcp header
-	tcppkpayload = nfq_tcp_get_payload(tcppkhdl, pktb); //获取 tcp载荷
-	tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
+    pktb = pktb_alloc(AF_INET, payload, plen, 0); //IP包
 
-	if (tcppkpayload) {
-		char* uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14); // 找到指向 UA 的第一个字符的指针
+    if (!pktb) {
+        syslog(LOG_ERR,
+               "pktb malloc failed");
+        return MNL_CB_ERROR;
+    }
 
-		if (uapointer) {
-			uaoffset = uapointer - tcppkpayload + 14; // 计算在 TCP 数据包中的偏移量
+    ippkhdl = nfq_ip_get_hdr(pktb); //获取ip header
 
-			char* endpointer = memchr(uapointer + 14, '\r', tcppklen - uaoffset - 2); // 找到 UA 字符串的结尾
-
-			if (endpointer == NULL) {
-				syslog(LOG_WARNING,
-					"User-Agent has no content");
-
-				nfq_send_verdict(ntohs(nfg
-
-					->res_id),
-					ntohl((uint32_t)
-						ph->packet_id), pktb, mark, noUA, addcmd);
-				return
-					MNL_CB_OK;
-			}
-
-			ualength = endpointer - uapointer - 14;
+    if (nfq_ip_set_transport_header(pktb, ippkhdl) < 0) {
+        syslog(LOG_ERR, "set transport header failed");
+        pktb_free(pktb);
+        return MNL_CB_ERROR;
+    }
 
 
-			if (
-				nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength
-				) == 1) {
-				UAcount++; // 记录修改包的数量
-			}
-			else {
-				syslog(LOG_ERR,
-					"Mangle packet failed.");
-				pktb_free(pktb);
-				return
-					MNL_CB_ERROR;
+    tcppkhdl = nfq_tcp_get_hdr(pktb); //获取 tcp header
+    tcppkpayload = nfq_tcp_get_payload(tcppkhdl, pktb); //获取 tcp载荷
+    tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
-			}
+    if (tcppkpayload) {
+        char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14); // 找到指向 UA 的第一个字符的指针
 
-		}
-		else {
-			noUA = true;
-		}
-	}
+        if (uapointer) {
+            uaoffset = uapointer - tcppkpayload + 14; // 计算在 TCP 数据包中的偏移量
 
-	nfq_send_verdict(ntohs(nfg
+            char *endpointer = memchr(uapointer + 14, '\r', tcppklen - uaoffset - 2); // 找到 UA 字符串的结尾
 
-		->res_id),
-		ntohl((uint32_t)
-			ph->packet_id), pktb, mark, noUA, addcmd);
+            if (endpointer == NULL) {
+                syslog(LOG_WARNING, "User-Agent has no content");
 
-	if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
-		httpcount = UAcount;
-		current_t = time(NULL);
-		char* timestr = time2str((int)difftime(current_t, start_t));
-		syslog(LOG_INFO,
-			"UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s",
-			UAcount, tcpcount, UAmark, noUAmark, timestr);
+                nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
+                return MNL_CB_OK;
+            }
 
-	}
+            ualength = endpointer - uapointer - 14;
 
-	return
-		MNL_CB_OK;
+
+            if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
+                UAcount++; // 记录修改包的数量
+            } else {
+                syslog(LOG_ERR, "Mangle packet failed.");
+                pktb_free(pktb);
+                return MNL_CB_ERROR;
+            }
+        } else {
+
+            noUA = true;
+        }
+    }
+
+    nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
+
+    if (UAcount / httpcount == 2 || UAcount - httpcount >= 8192) {
+        httpcount = UAcount;
+        current_t = time(NULL);
+        char *timestr = time2str((int) difftime(current_t, start_t));
+        syslog(LOG_INFO,
+               "UA2F has handled %lld ua http, %lld tcp. Set %lld mark and %lld noUA mark in %s",
+               UAcount, tcpcount, UAmark, noUAmark, timestr);
+
+    }
+
+    return MNL_CB_OK;
 }
 
 static void killChild() {
-	syslog(LOG_INFO, "Received SIGTERM, kill child %d", child_status);
-	kill(child_status, SIGKILL); // Not graceful, but work
-	mnl_socket_close(nl);
-	exit(EXIT_SUCCESS);
+    syslog(LOG_INFO, "Received SIGTERM, kill child %d", child_status);
+    kill(child_status, SIGKILL); // Not graceful, but work
+    mnl_socket_close(nl);
+    exit(EXIT_SUCCESS);
 }
 
-int main(int argc, char* argv[]) {
-	char* buf;
-  size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE / 2);
-	struct nlmsghdr* nlh;
-	ssize_t ret;
-	unsigned int portid;
+int main(int argc, char *argv[]) {
+    char *buf;
+    size_t sizeof_buf = sizeof(buf) - (MNL_SOCKET_BUFFER_SIZE & ~(sizeof(buf) - 1));
+    struct nlmsghdr *nlh;
+    ssize_t ret;
+    unsigned int portid;
 
-	int errcount = 0;
+    int errcount = 0;
 
-	signal(SIGTERM, killChild);
+    signal(SIGTERM, killChild);
 
-	for (int errcount = 0; errcount <= 10; ++errcount) {
-		pid_t child_pid = fork();
-		if (child_pid == -1) {
-			syslog(LOG_ERR, "Failed to give birth.");
-			syslog(LOG_ERR, "Exit at fork.");
-			exit(EXIT_FAILURE);
-		}
-		if (child_pid == 0) {
-			syslog(LOG_NOTICE, "UA2F processor start at [%d].", getpid());
-			break;
-		}
-		else {
-			int status;
-			if (waitpid(child_pid, &status, 0) == -1) {
-
-
-				syslog(LOG_ERR, "Child suicide.");
-			}
-			else {
-				syslog(LOG_ERR, "Meet fatal error.[%d] dies by %d", child_pid, status);
-			}
-		}
-		if (errcount == 10) {
-
-			syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
-			syslog(LOG_ERR, "Exit with too many error.");
-			exit(EXIT_FAILURE);
-		}
-	}
+    for (int errcount = 0; errcount <= 10; ++errcount) {
+        pid_t child_pid = fork();
+        if (child_pid == -1) {
+            syslog(LOG_ERR, "Failed to give birth.");
+            syslog(LOG_ERR, "Exit at fork.");
+            exit(EXIT_FAILURE);
+        }
+        if (child_pid == 0) {
+            syslog(LOG_NOTICE, "UA2F processor start at [%d].", getpid());
+            break;
+        } else {
+            int status;
+            if (waitpid(child_pid, &status, 0) == -1) {
 
 
-	openlog("UA2F", LOG_PID, LOG_SYSLOG);
+                syslog(LOG_ERR, "Child suicide.");
+            } else {
+                syslog(LOG_ERR, "Meet fatal error.[%d] dies by %d", child_pid, status);
+            }
+        }
+        if (errcount == 10) {
 
-	start_t = time(NULL);
-
-	ipset_load_types();
-	Pipset = ipset_init();
-
-	if (!Pipset) {
-		syslog(LOG_ERR, "Pipset not inited.");
-		exit(EXIT_FAILURE);
-	}
-
-	ipset_custom_printf(Pipset, func, func2, func3, NULL); // hook 掉退出的输出函数
-
-	syslog(LOG_NOTICE, "Pipset inited.");
-
-	nl = mnl_socket_open(NETLINK_NETFILTER);
-
-	if (nl == NULL) {
-		perror("mnl_socket_open");
-		syslog(LOG_ERR, "Exit at mnl_socket_open.");
-		exit(EXIT_FAILURE);
-	}
-
-	if (mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID) < 0) {
-		perror("mnl_socket_bind");
-		syslog(LOG_ERR, "Exit at mnl_socket_bind.");
-		exit(EXIT_FAILURE);
-	}
-	portid = mnl_socket_get_portid(nl);
-
-	buf = malloc(sizeof_buf);
-	if (!buf) {
-		perror("allocate receive buffer");
-		syslog(LOG_ERR, "Exit at breakpoint 6.");
-		exit(EXIT_FAILURE);
-	}
-
-	UAstr = malloc(sizeof_buf);
-	memset(UAstr, ' ', sizeof_buf); // 原始UA参数
-	//memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
-	//memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
-	memcpy(UAstr,
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.7.6279.45 Safari/537.36",
-		115); // WinOS Common UA
-	//memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
-	//memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
-	//memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
-	//memcpy(str, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/98.3.3987.872 Safari/605.1.15", 109); // Linux UA
-
-	nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
-	nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
-
-	if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
-		perror("mnl_socket_send");
-		syslog(LOG_ERR, "Exit at breakpoint 7.");
-		exit(EXIT_FAILURE);
-	}
-
-	nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
-	nfq_nlmsg_cfg_put_params(nlh, NFQNL_COPY_PACKET, 0xffff);
-
-	mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_FLAGS,
-		htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
-	mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_MASK,
-		htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
+            syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
+            syslog(LOG_ERR, "Exit with too many error.");
+            exit(EXIT_FAILURE);
+        }
+    }
 
 
-	if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
-		perror("mnl_socket_send");
-		syslog(LOG_ERR, "Exit at mnl_socket_send.");
-		exit(EXIT_FAILURE);
-	}
+    openlog("UA2F", LOG_PID, LOG_SYSLOG);
 
-	ret = 1;
-	mnl_socket_setsockopt(nl, NETLINK_NO_ENOBUFS, &ret, sizeof(int));
+    start_t = time(NULL);
 
-	syslog(LOG_NOTICE, "UA2F has inited successful.");
+    ipset_load_types();
+    Pipset = ipset_init();
 
-	while (true) {
-		ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
-		if (ret == -1) { //stop at failure
+    if (!Pipset) {
+        syslog(LOG_ERR, "Pipset not inited.");
+        exit(EXIT_FAILURE);
+    }
 
-			perror("mnl_socket_recvfrom");
-			syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
-			exit(EXIT_FAILURE);
-		}
+    ipset_custom_printf(Pipset, func, func2, func3, NULL); // hook 掉退出的输出函数
+
+    syslog(LOG_NOTICE, "Pipset inited.");
+
+    nl = mnl_socket_open(NETLINK_NETFILTER);
+
+    if (nl == NULL) {
+        perror("mnl_socket_open");
+        syslog(LOG_ERR, "Exit at mnl_socket_open.");
+        exit(EXIT_FAILURE);
+    }
+
+    if (mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID) < 0) {
+        perror("mnl_socket_bind");
+        syslog(LOG_ERR, "Exit at mnl_socket_bind.");
+        exit(EXIT_FAILURE);
+    }
+    portid = mnl_socket_get_portid(nl);
+
+    buf = malloc(sizeof_buf);
+    if (!buf) {
+        perror("allocate receive buffer");
+        syslog(LOG_ERR, "Exit at breakpoint 6.");
+        exit(EXIT_FAILURE);
+    }
+
+    UAstr = malloc(sizeof_buf);
+    memset(UAstr, ' ', sizeof_buf); // 原始UA参数
+    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
+    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
+    memcpy(UAstr,
+           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.7.6279.45 Safari/537.36",
+           115); // WinOS Common UA
+    //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
+    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
+    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
+    //memcpy(str, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/98.3.3987.872 Safari/605.1.15", 109); // Linux UA
+
+    nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
+    nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
+
+    if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
+        perror("mnl_socket_send");
+        syslog(LOG_ERR, "Exit at breakpoint 7.");
+        exit(EXIT_FAILURE);
+    }
+
+    nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
+    nfq_nlmsg_cfg_put_params(nlh, NFQNL_COPY_PACKET, 0xffff);
+
+    mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_FLAGS,
+                           htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
+    mnl_attr_put_u32_check(nlh, MNL_SOCKET_BUFFER_SIZE, NFQA_CFG_MASK,
+                           htonl(NFQA_CFG_F_GSO | NFQA_CFG_F_FAIL_OPEN | NFQA_CFG_F_CONNTRACK));
 
 
-		ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t)queue_cb, NULL);
-		if (ret < 0) { //stop at failure
+    if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
+        perror("mnl_socket_send");
+        syslog(LOG_ERR, "Exit at mnl_socket_send.");
+        exit(EXIT_FAILURE);
+    }
+
+    ret = 1;
+    mnl_socket_setsockopt(nl, NETLINK_NO_ENOBUFS, &ret, sizeof(int));
+
+    syslog(LOG_NOTICE, "UA2F has inited successful.");
+
+    while (true) {
+        ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
+        if (ret == -1) { //stop at failure
+
+            perror("mnl_socket_recvfrom");
+            syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
+            exit(EXIT_FAILURE);
+        }
 
 
-			perror("mnl_cb_run");
-			syslog(LOG_ERR, "Exit at mnl_cb_run.");
-			exit(EXIT_FAILURE);
-		}
-	}
+        ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
+        if (ret < 0) { //stop at failure
+
+
+            perror("mnl_cb_run");
+            syslog(LOG_ERR, "Exit at mnl_cb_run.");
+            exit(EXIT_FAILURE);
+        }
+    }
 }
