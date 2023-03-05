@@ -56,49 +56,46 @@ void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
     const char *cl = (const char *) l;
     const char *cs = (const char *) s;
 
-    if (l_len == 0 || s_len == 0) {
-
+    /* we need something to compare */
+    if (l_len == 0 || s_len == 0)
         return NULL;
-    }
 
-    if (l_len < s_len) {
-
+    /* "s" must be smaller or equal to "l" */
+    if (l_len < s_len)
         return NULL;
-    }
 
-    if (s_len == 1) {
-
+    /* special case where s_len == 1 */
+    if (s_len == 1)
         return memchr(l, (int) *cs, l_len);
-    }
 
+    /* the last position where its possible to find "s" in "l" */
     const char *last = cl + l_len - s_len;
-    for (; cl <= last && (cl = memchr(cl, cs[0], last - cl + 1)); cl++) {
-        if (memcmp(cl, cs, s_len) == 0) {
+
+    while (cl <= last) {
+        if (tolower(*cl) == tolower(*cs) && strncasecmp(cl, cs, s_len) == 0) {
             return (void *) cl;
         }
+        cl++;
     }
 
     return NULL;
 }
 
 static char *time2str(int sec) {
-    static const int MINUTE = 60;
-    static const int HOUR = 60 * MINUTE;
-    static const int DAY = 24 * HOUR;
+    memset(timestr, 0, sizeof(timestr));
+    int days = sec / 86400;
+    int hours = (sec % 86400) / 3600;
+    int minutes = (sec % 3600) / 60;
+    int seconds = sec % 60;
 
-    static char timestr[32] = {0};
-
-    time_t timestamp = (time_t) sec;
-    struct tm *tm_info = localtime(&timestamp);
-
-    if (sec <= 0) {
-        sprintf(timestr, "0 seconds");
-    } else if (sec < HOUR) {
-        strftime(timestr, sizeof(timestr), "%M minutes and %S seconds", tm_info);
-    } else if (sec < DAY) {
-        strftime(timestr, sizeof(timestr), "%H hours, %M minutes and %S seconds", tm_info);
+    if (days > 0) {
+        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", days, hours, minutes, seconds);
+    } else if (hours > 0) {
+        sprintf(timestr, "%d hours, %d minutes and %d seconds", hours, minutes, seconds);
+    } else if (minutes > 0) {
+        sprintf(timestr, "%d minutes and %d seconds", minutes, seconds);
     } else {
-        strftime(timestr, sizeof(timestr), "%d days, %H hours, %M minutes and %S seconds", tm_info);
+        sprintf(timestr, "%d seconds", seconds);
 
 
     }
@@ -109,15 +106,11 @@ static char *time2str(int sec) {
 static int parse_attrs(const struct nlattr *attr, void *data) {
     assert(attr != NULL);
     assert(data != NULL);
-
-    struct nlattr **tb = data;
+    
+    const struct nlattr **tb = data;
     int type = mnl_attr_get_type(attr);
 
-    if (type >= 0 && type < MNL_SOCKET_BUFFER_SIZE) {
-        if (!mnl_attr_validate(attr, MNL_TYPE_UNSPEC)) {
-            tb[type] = (struct nlattr *) attr;
-        }
-    }
+    tb[type] = attr;
 
     return MNL_CB_OK;
 }
@@ -137,26 +130,36 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
         nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
     }
 
+
     if (noUA) {
         if (mark == 1 || (mark >= 16 && mark <= 40)) {
             setmark = (mark == 1) ? 16 : (mark + 1);
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
+
+
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
             mnl_attr_nest_end(nlh, nest);
         } else if (mark == 41) { // 21 统计确定此连接为不含UA连接
+
+
+
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(43));
             mnl_attr_nest_end(nlh, nest); // 加 CONNMARK
 
             ipset_parse_line(Pipset, addcmd); //加 ipset 标记
+
             noUAmark++;
         }
     } else if (mark != 44) {
+
         nest = mnl_attr_nest_start(nlh, NFQA_CT);
         mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
         mnl_attr_nest_end(nlh, nest);
         UAmark++;
+
     }
+
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
@@ -408,9 +411,7 @@ int main(int argc, char *argv[]) {
     memset(UAstr, ' ', sizeof_buf); // 原始UA参数
     //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
     //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
-    memcpy(UAstr,
-           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.6.4279.38 Safari/537.36",
-           115); // WinOS Common UA
+    memcpy(UAstr, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.3.5239.47 Safari/537.36", 115); // WinOS Common UA
     //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
     //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
     //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
@@ -446,19 +447,22 @@ int main(int argc, char *argv[]) {
     syslog(LOG_NOTICE, "UA2F has inited successful.");
 
     while (1) {
-        ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
-        if (ret < 0) {
+        ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
+        if (ret == -1) {
+            // 如果接收失败，则记录错误信息并退出程序。
             perror("mnl_socket_recvfrom");
-            break;
-
+            syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
+            exit(EXIT_FAILURE);
         }
-        ret = mnl_cb_run(buf, ret, 0, portid, queue_cb, NULL);
+
+        // 解析 netlink 消息并处理它
+        ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
+
         if (ret < 0) {
-
+            // 如果解析失败，则记录错误信息并退出程序。
             perror("mnl_cb_run");
-            break;
-
+            syslog(LOG_ERR, "Exit at mnl_cb_run.");
+            exit(EXIT_FAILURE);
         }
     }
-    mnl_socket_close(nl);
 }
