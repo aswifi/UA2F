@@ -72,27 +72,27 @@ void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
     last = (char *) cl + l_len - s_len;
 
     for (cur = (char *) cl; cur <= last; cur++)
-        if (cur[0] == cs[0] && strncasecmp(cur, cs, s_len) == 0)
+        if (tolower(cur[0]) == tolower(cs[0]) && strncasecmp(cur, cs, s_len) == 0)
             return cur;
-
 
     return NULL;
 }
 
 static char *time2str(int sec) {
+    static const int minute = 60;
+    static const int hour = 60 * minute;
+    static const int day = 24 * hour;
+
     memset(timestr, 0, sizeof(timestr));
-    if (sec <= 60) {
+
+    if (sec <= minute) {
         sprintf(timestr, "%d seconds", sec);
-    } else if (sec <= 3600) {
-        sprintf(timestr, "%d minutes and %d seconds", sec / 60, sec % 60);
-    } else if (sec <= 86400) {
-        sprintf(timestr, "%d hours, %d minutes and %d seconds", sec / 3600, sec % 3600 / 60, sec % 60);
-
-
+    } else if (sec <= hour) {
+        sprintf(timestr, "%d minutes and %d seconds", sec / minute, sec % minute);
+    } else if (sec <= day) {
+        sprintf(timestr, "%d hours, %d minutes and %d seconds", sec / hour, sec % hour / minute, sec % minute);
     } else {
-        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / 86400, sec % 86400 / 3600,
-                sec % 3600 / 60,
-                sec % 60);
+        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / day, sec % day / hour, sec % hour / minute, sec % minute);
     }
 
     return timestr;
@@ -124,43 +124,31 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
         nfq_nlmsg_verdict_put_pkt(nlh, pktb_data(pktb), pktb_len(pktb));
     }
 
-
     if (noUA) {
-        if (mark == 1) {
+        if (mark >= 1 && mark <= 40) {
+            if (mark == 1) {
+                setmark = 16; // 不含 UA 的 HTTP 流量
+            } else {
+                setmark = mark + 1; // 其他不含 UA 的流量
+            }
 
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(16));
-            mnl_attr_nest_end(nlh, nest);
-        }
-
-        if (mark >= 16 && mark <= 40) {
-            setmark = mark + 1;
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
             mnl_attr_nest_end(nlh, nest);
-        }
-
-
-        if (mark == 41) { // 21 统计确定此连接为不含UA连接
-
+        } else if (mark == 41) {
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(43));
-            mnl_attr_nest_end(nlh, nest); // 加 CONNMARK
+            mnl_attr_put_u32(nlh, CTA_MARK, htonl(43)); // 不含 UA 的连接
+            mnl_attr_nest_end(nlh, nest);
 
-            ipset_parse_line(Pipset, addcmd); //加 ipset 标记
-
+            ipset_parse_line(Pipset, addcmd); // 添加 IPSET 标记
             noUAmark++;
         }
-    } else {
-        if (mark != 44) {
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
-            mnl_attr_nest_end(nlh, nest);
-            UAmark++;
-
-        }
+    } else if (mark != 44) {
+        nest = mnl_attr_nest_start(nlh, NFQA_CT);
+        mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
+        mnl_attr_nest_end(nlh, nest);
+        UAmark++;
     }
-
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
