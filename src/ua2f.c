@@ -251,7 +251,10 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
 
 
         }
+
+
     }
+
 
     ph = mnl_attr_get_payload(attr[NFQA_PACKET_HDR]);
 
@@ -262,8 +265,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     pktb = pktb_alloc(AF_INET, payload, plen, 0); //IP包
 
     if (!pktb) {
-        syslog(LOG_ERR,
-               "pktb malloc failed");
+        syslog(LOG_ERR, "pktb malloc failed");
         return MNL_CB_ERROR;
     }
 
@@ -304,8 +306,10 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 syslog(LOG_ERR, "Mangle packet failed.");
                 pktb_free(pktb);
                 return MNL_CB_ERROR;
+
             }
         } else {
+
 
             noUA = true;
         }
@@ -335,7 +339,7 @@ static void killChild() {
 
 int main(int argc, char *argv[]) {
     char *buf;
-    size_t sizeof_buf = sizeof(buf) - (MNL_SOCKET_BUFFER_SIZE & ~(sizeof(buf) - 1));
+    size_t sizeof_buf = 0xffff + (MNL_SOCKET_BUFFER_SIZE / 2);
     struct nlmsghdr *nlh;
     ssize_t ret;
     unsigned int portid;
