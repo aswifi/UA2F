@@ -21,7 +21,7 @@ restart() {
     service_stop /usr/bin/$APP
 
     # 等待服务完全停止
-    sleep 3
+    sleep 2
 
     # 启动服务并记录输出和错误日志
     service_start /usr/bin/$APP >> $LOG_FILE 2>&1 &
@@ -30,10 +30,4 @@ restart() {
 stop() {
     # 停止服务
     service_stop /usr/bin/$APP
-}
-
-# 检查服务状态
-status() {
-    # 使用service status命令检查服务的状态
-    service status /usr/bin/$APP
 }
