@@ -8,7 +8,7 @@
 
 #include "ipset_hook.h"
 
-#include <assert.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,10 +49,12 @@ static char timestr[60];
 
 char *UAstr = NULL;
 
+const char *default_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.6.4279.38 Safari/537.36";
+
 static struct ipset *Pipset;
 
 void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
-
+    register char *cur, *last;
     const char *cl = (const char *) l;
     const char *cs = (const char *) s;
 
@@ -69,44 +71,38 @@ void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
         return memchr(l, (int) *cs, l_len);
 
     /* the last position where its possible to find "s" in "l" */
-    const char *last = cl + l_len - s_len;
+    last = (char *) cl + l_len - s_len;
 
-    while (cl <= last) {
-        if (tolower(*cl) == tolower(*cs) && strncasecmp(cl, cs, s_len) == 0) {
-            return (void *) cl;
-        }
-        cl++;
-    }
+    for (cur = (char *) cl; cur <= last; cur++)
+        if (cur[0] == cs[0] && strncasecmp(cur, cs, s_len) == 0)
+            return cur;
+
 
     return NULL;
 }
 
 static char *time2str(int sec) {
     memset(timestr, 0, sizeof(timestr));
-    int days = sec / 86400;
-    int hours = (sec % 86400) / 3600;
-    int minutes = (sec % 3600) / 60;
-    int seconds = sec % 60;
+    if (sec <= 60) {
+        sprintf(timestr, "%d seconds", sec);
+    } else if (sec <= 3600) {
+        sprintf(timestr, "%d minutes and %d seconds", sec / 60, sec % 60);
+    } else if (sec <= 86400) {
+        sprintf(timestr, "%d hours, %d minutes and %d seconds", sec / 3600, sec % 3600 / 60, sec % 60);
 
-    if (days > 0) {
-        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", days, hours, minutes, seconds);
-    } else if (hours > 0) {
-        sprintf(timestr, "%d hours, %d minutes and %d seconds", hours, minutes, seconds);
-    } else if (minutes > 0) {
-        sprintf(timestr, "%d minutes and %d seconds", minutes, seconds);
+
     } else {
-        sprintf(timestr, "%d seconds", seconds);
-
-
+        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / 86400, sec % 86400 / 3600,
+                sec % 3600 / 60,
+                sec % 60);
     }
 
     return timestr;
 }
 
 static int parse_attrs(const struct nlattr *attr, void *data) {
-    assert(attr != NULL);
-    assert(data != NULL);
-    
+
+
     const struct nlattr **tb = data;
     int type = mnl_attr_get_type(attr);
 
@@ -132,16 +128,22 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
 
 
     if (noUA) {
-        if (mark == 1 || (mark >= 16 && mark <= 40)) {
-            setmark = (mark == 1) ? 16 : (mark + 1);
+        if (mark == 1) {
+
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
+            mnl_attr_put_u32(nlh, CTA_MARK, htonl(16));
+            mnl_attr_nest_end(nlh, nest);
+        }
 
-
+        if (mark >= 16 && mark <= 40) {
+            setmark = mark + 1;
+            nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
             mnl_attr_nest_end(nlh, nest);
-        } else if (mark == 41) { // 21 统计确定此连接为不含UA连接
+        }
 
 
+        if (mark == 41) { // 21 统计确定此连接为不含UA连接
 
             nest = mnl_attr_nest_start(nlh, NFQA_CT);
             mnl_attr_put_u32(nlh, CTA_MARK, htonl(43));
@@ -151,13 +153,14 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
 
             noUAmark++;
         }
-    } else if (mark != 44) {
+    } else {
+        if (mark != 44) {
+            nest = mnl_attr_nest_start(nlh, NFQA_CT);
+            mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
+            mnl_attr_nest_end(nlh, nest);
+            UAmark++;
 
-        nest = mnl_attr_nest_start(nlh, NFQA_CT);
-        mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
-        mnl_attr_nest_end(nlh, nest);
-        UAmark++;
-
+        }
     }
 
 
@@ -172,8 +175,7 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
 }
 
 static int queue_cb(const struct nlmsghdr *nlh, void *data) {
-    assert(nlh != NULL);
-    assert(data != NULL);
+
 
     struct nfqnl_msg_packet_hdr *ph = NULL;
     struct nlattr *attr[NFQA_MAX + 1] = {};
@@ -187,7 +189,7 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     struct tcphdr *tcppkhdl;
     struct nfgenmsg *nfg;
     char *tcppkpayload;
-    char *uapointer;
+
     unsigned int tcppklen;
     unsigned int uaoffset = 0;
     unsigned int ualength = 0;
@@ -272,41 +274,42 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     tcppkpayload = nfq_tcp_get_payload(tcppkhdl, pktb); //获取 tcp载荷
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
-    // 修改 TCP 数据包中的 User-Agent 头部
-    if (tcppkpayload && (uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14))) {
+    if (tcppkpayload) {
+        char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14); // 找到指向 \r 的指针
 
 
-        uaoffset = uapointer - tcppkpayload + 14; // 应该指向 UA 的第一个字符
+        if (uapointer) {
+            uaoffset = uapointer - tcppkpayload + 14; // 应该指向 UA 的第一个字符
 
-        if (uaoffset >= tcppklen - 2) { // User-Agent: XXX\r\n
-            syslog(LOG_WARNING, "User-Agent has no content");
-            // https://github.com/Zxilly/UA2F/pull/42#issue-1159773997
-            nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
-            return MNL_CB_OK;
-        }
-
-        char *uaStartPointer = uapointer + 14;
-
-        for (unsigned int i = 0; i < (tcppklen - uaoffset); ++i) {
-            if (*(uaStartPointer + i) == '\r') {
-                ualength = i;
-                break;
+            if (uaoffset >= tcppklen - 2) { // User-Agent: XXX\r\n
+                syslog(LOG_WARNING, "User-Agent has no content");
+                // https://github.com/Zxilly/UA2F/pull/42#issue-1159773997
+                nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
+                return MNL_CB_OK;
             }
-        }
 
-        if (ualength > 0) {
-            if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
-                UAcount++; //记录修改包的数量
-            } else {
-                syslog(LOG_ERR, "Mangle packet failed.");
-                pktb_free(pktb);
-                return MNL_CB_ERROR;
+            char *uaStartPointer = uapointer + 14;
+            const unsigned int uaLengthBound = tcppklen - uaoffset;
+            for (unsigned int i = 0; i < uaLengthBound; ++i) {
+                if (*(uaStartPointer + i) == '\r') {
+                    ualength = i;
+                    break;
+                }
             }
+
+            if (ualength > 0) {
+                if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
+                    UAcount++; //记录修改包的数量
+                } else {
+                    syslog(LOG_ERR, "Mangle packet failed.");
+                    pktb_free(pktb);
+                    return MNL_CB_ERROR;
+                }
+            }
+        } else {
+            noUA = true;
         }
-    } else {
-        noUA = true;
     }
-
 
     nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
 
@@ -407,15 +410,12 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    UAstr = malloc(sizeof_buf);
-    memset(UAstr, ' ', sizeof_buf); // 原始UA参数
-    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
-    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
-    memcpy(UAstr, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.3.5239.47 Safari/537.36", 115); // WinOS Common UA
-    //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
-    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
-    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
-    //memcpy(str, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/98.3.3987.872 Safari/605.1.15", 109); // Linux UA
+    size_t len = strlen(default_ua);
+    UAstr = malloc(len + 1);
+
+// 将 UA 参数初始化为默认值，并使用空字符作为终止符
+    memcpy(UAstr, default_ua, len);
+    UAstr[len] = '\0';
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
@@ -448,18 +448,18 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
-        if (ret == -1) {
-            // 如果接收失败，则记录错误信息并退出程序。
+        if (ret == -1) { //stop at failure
+
             perror("mnl_socket_recvfrom");
             syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
             exit(EXIT_FAILURE);
         }
 
-        // 解析 netlink 消息并处理它
-        ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
 
-        if (ret < 0) {
-            // 如果解析失败，则记录错误信息并退出程序。
+        ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
+        if (ret < 0) { //stop at failure
+            // printf("errno=%d\n", errno);
+
             perror("mnl_cb_run");
             syslog(LOG_ERR, "Exit at mnl_cb_run.");
             exit(EXIT_FAILURE);
