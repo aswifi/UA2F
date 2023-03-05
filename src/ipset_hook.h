@@ -1,21 +1,21 @@
-//
-// Created by 12009 on 2021/1/12.
-//
 #include <libipset/ipset.h>
 
 #ifndef UA2F_IPSET_HOOK_H
 #define UA2F_IPSET_HOOK_H
 
-int func(struct ipset *ipset, void *p, int status, const char *msg, ...) {
-    return 0;
-}
+/* 常量 */
+#define MAX_ENTRIES 1000
 
-int func2(struct ipset *ipset, void *p) {
-    return 0;
-}
+/* 结构体 */
+struct ipset_entry {
+    char ip_address[20];
+    int port;
+};
 
-int func3(struct ipset_session *session, void *p, const char *fmt, ...) {
-    return 0;
-}
+/* 函数声明 */
+int func(struct ipset *ipset, void *p, int status, const char *msg, ...);
+int func2(struct ipset *ipset, void *p);
+int func3(struct ipset_session *session, void *p, const char *fmt, ...);
+void process_entries(struct ipset_entry *entries, int num_entries);
 
-#endif //UA2F_IPSET_HOOK_H
+#endif /* UA2F_IPSET_HOOK_H */

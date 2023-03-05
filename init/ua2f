@@ -1,19 +1,39 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2020 Zxilly
 
 START=50
 APP=ua2f
 SERVICE_WRITE_PID=1
 SERVICE_DAEMONIZE=1
 
+# 日志文件位置
+LOG_FILE=/var/log/$APP.log
+
 start() {
-        service_start /usr/bin/$APP
+    # 删除旧的日志文件
+    rm -f $LOG_FILE
+
+    # 启动服务，并将输出和错误日志都重定向到日志文件中
+    service_start /usr/bin/$APP >> $LOG_FILE 2>&1 &
 }
 
 restart() {
-        service_restart /usr/bin/$APP
+    # 停止服务
+    service_stop /usr/bin/$APP
+
+    # 等待服务完全停止
+    sleep 3
+
+    # 启动服务并记录输出和错误日志
+    service_start /usr/bin/$APP >> $LOG_FILE 2>&1 &
 }
 
 stop() {
-        service_stop /usr/bin/$APP
+    # 停止服务
+    service_stop /usr/bin/$APP
+}
+
+# 检查服务状态
+status() {
+    # 使用service status命令检查服务的状态
+    service status /usr/bin/$APP
 }
