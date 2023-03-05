@@ -49,8 +49,6 @@ static char timestr[60];
 
 char *UAstr = NULL;
 
-const char *default_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.6.4279.38 Safari/537.36";
-
 static struct ipset *Pipset;
 
 void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
@@ -410,11 +408,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    size_t len = strlen(default_ua);
-    UAstr = malloc(len + 1);
-
-    // 将 UA 参数初始化为默认值，并使用空字符作为终止符
-    memcpy(UAstr, default_ua, len + 1);
+    UAstr = strdup("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.6.4279.38 Safari/537.36");
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
