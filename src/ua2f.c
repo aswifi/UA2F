@@ -9,6 +9,7 @@
 #include "ipset_hook.h"
 
 #include <stdio.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -18,6 +19,8 @@
 #include <syslog.h>
 #include <signal.h>
 #include <arpa/inet.h>
+
+#include <errno.h>
 
 #include <libmnl/libmnl.h>
 
@@ -34,6 +37,8 @@ int child_status;
 
 static struct mnl_socket *nl;
 static const int queue_number = 10010;
+
+static const char COMMON_UA[] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.3.4269.82 Safari/537.36";
 
 static long long UAcount = 0;
 static long long tcpcount = 0;
@@ -77,29 +82,33 @@ void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
     return NULL;
 }
 
+typedef enum {
+    SECOND = 1,
+    MINUTE = 60 * SECOND,
+    HOUR = 60 * MINUTE,
+    DAY = 24 * HOUR
+} TimeUnit;
+
 static char *time2str(int sec) {
-	
-    static const int minute = 60;
-    static const int hour = 60 * minute;
-    static const int day = 24 * hour;
+
+    static const TimeUnit UNIT[] = {DAY, HOUR, MINUTE, SECOND};
+    static const char *UNIT_NAME[] = {" days", " hours", " minutes", " seconds"};
 
     memset(timestr, 0, sizeof(timestr));
-
-    if (sec <= minute) {
-        sprintf(timestr, "%d seconds", sec);
-    } else if (sec <= hour) {
-        sprintf(timestr, "%d minutes and %d seconds", sec / minute, sec % minute);
-    } else if (sec <= day) {
-        sprintf(timestr, "%d hours, %d minutes and %d seconds", sec / hour, sec % hour / minute, sec % minute);
-    } else {
-        sprintf(timestr, "%d days, %d hours, %d minutes and %d seconds", sec / day, sec % day / hour,
-                sec % hour / minute, sec % minute);
+    int len = 0;
+    for (int i = 0; i < sizeof(UNIT) / sizeof(UNIT[0]); ++i) {
+        if (sec >= UNIT[i]) {
+            int val = sec / UNIT[i];
+            sprintf(timestr + len, "%d%s, ", val, UNIT_NAME[i]);
+            len += strlen(timestr + len);
+            sec %= UNIT[i];
+        }
     }
-
+    timestr[len - 2] = '\0';
     return timestr;
 }
 
-    static int parse_attrs(const struct nlattr *attr, void *data) {
+static int parse_attrs(const struct nlattr *attr, void *data) {
 
     const struct nlattr **tb = data;
     int type = mnl_attr_get_type(attr);
@@ -112,6 +121,7 @@ static char *time2str(int sec) {
 static void
 nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mark, bool noUA,
                  char addcmd[50]) { // http mark = 24, ukn mark = 16-20, no http mark = 23
+    
     char buf[0xffff + (MNL_SOCKET_BUFFER_SIZE / 2)];
     struct nlmsghdr *nlh;
     struct nlattr *nest;
@@ -126,26 +136,27 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
 
     if (noUA) {
         if (mark >= 1 && mark <= 40) {
-            if (mark == 1) {
-                setmark = 16; // 不含 UA 的 HTTP 流量
-            } else {
-                setmark = mark + 1; // 其他不含 UA 的流量
-            }
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
-            mnl_attr_nest_end(nlh, nest);
+            setmark = (mark == 1) ? 16 : mark + 1; // 不含 UA 的 HTTP 流量
         } else if (mark == 41) {
-            nest = mnl_attr_nest_start(nlh, NFQA_CT);
-            mnl_attr_put_u32(nlh, CTA_MARK, htonl(43)); // 不含 UA 的连接
-            mnl_attr_nest_end(nlh, nest);
+            setmark = 43; // 不含 UA 的连接
             ipset_parse_line(Pipset, addcmd); // 添加 IPSET 标记
-            noUAmark++;
         }
     } else if (mark != 44) {
+        setmark = 44; // 含 UA 的流量
+    }
+
+    if (setmark) {
         nest = mnl_attr_nest_start(nlh, NFQA_CT);
-        mnl_attr_put_u32(nlh, CTA_MARK, htonl(44));
+        __builtin_prefetch(&mnl_attr_put_u32, 0, 3); // 预取下一条指令
+        mnl_attr_put_u32(nlh, CTA_MARK, htonl(setmark));
         mnl_attr_nest_end(nlh, nest);
-        UAmark++;
+
+        // 记录标记数量
+        if (setmark == 43) {
+            noUAmark++;
+        } else if (setmark == 44) {
+            UAmark++;
+        }
     }
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
@@ -309,29 +320,33 @@ int main(int argc, char *argv[]) {
     ssize_t ret;
     unsigned int portid;
     int errcount = 0;
+
     signal(SIGTERM, killChild);
 
     for (int errcount = 0; errcount <= 10; ++errcount) {
         pid_t child_pid = fork();
         if (child_pid == -1) {
-            syslog(LOG_ERR, "Failed to give birth.");
-            syslog(LOG_ERR, "Exit at fork.");
+            syslog(LOG_ERR, "Failed to create child process: %s", strerror(errno));
             exit(EXIT_FAILURE);
         }
         if (child_pid == 0) {
-            syslog(LOG_NOTICE, "UA2F processor start at [%d].", getpid());
+            syslog(LOG_NOTICE, "UA2F processor started at [%d]", getpid());
             break;
         } else {
             int status;
             if (waitpid(child_pid, &status, 0) == -1) {
-                syslog(LOG_ERR, "Child suicide.");
+                syslog(LOG_ERR, "Child process terminated unexpectedly: %s", strerror(errno));
             } else {
-                syslog(LOG_ERR, "Meet fatal error.[%d] dies by %d", child_pid, status);
+                if (WIFEXITED(status)) {
+                    syslog(LOG_ERR, "Child process exited with status %d", WEXITSTATUS(status));
+                } else if (WIFSIGNALED(status)) {
+                    syslog(LOG_ERR, "Child process was terminated by signal %d: %s", WTERMSIG(status),
+                           strsignal(WTERMSIG(status)));
+                }
             }
         }
         if (errcount == 10) {
-            syslog(LOG_ERR, "Meet too many fatal error, no longer try to recover.");
-            syslog(LOG_ERR, "Exit with too many error.");
+            syslog(LOG_ERR, "Too many errors occurred, no longer trying to recover.");
             exit(EXIT_FAILURE);
         }
     }
@@ -375,16 +390,9 @@ int main(int argc, char *argv[]) {
     }
 
     UAstr = malloc(sizeof_buf);
-    memset(UAstr, ' ', sizeof_buf); // 原始UA参数
-    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/537.36", 114); // WinOS UA
-    //memcpy(str, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/97.0.4606.54 Safari/605.1.15 Edg/96.0.961.47", 134); // WinOS Full UA
-    memcpy(UAstr,
-           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.7.6279.45 Safari/537.36",
-           115); // WinOS Common UA
-    //memcpy(str, "Mozilla/5.0 (Linux; Android 11.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.2.4577.632 Mobile Safari/537.36", 114); // Andriod UA
-    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15", 114); // iPadOS UA
-    //memcpy(str, "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_6_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/96.1.3770.120 Safari/605.1.15", 124); // MacOS Catalina UA
-    //memcpy(str, "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/98.3.3987.872 Safari/605.1.15", 109); // Linux UA
+    memset(UAstr, ' ', sizeof_buf); // 替换原始UA参数
+    // 在需要使用该字符串时直接引用COMMON_UA即可
+    memcpy(UAstr, COMMON_UA, sizeof(COMMON_UA) - 1);
 
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_CONFIG, queue_number);
     nfq_nlmsg_cfg_put_cmd(nlh, AF_INET, NFQNL_CFG_CMD_BIND);
@@ -417,16 +425,13 @@ int main(int argc, char *argv[]) {
     while (true) {
         ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
         if (ret == -1) { //stop at failure
-
-            perror("mnl_socket_recvfrom");
-            syslog(LOG_ERR, "Exit at mnl_socket_recvfrom.");
+            syslog(LOG_ERR, "Failed to receive message from netlink socket: %s", strerror(errno));
             exit(EXIT_FAILURE);
         }
 
         ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
         if (ret < 0) { //stop at failure
-            perror("mnl_cb_run");
-            syslog(LOG_ERR, "Exit at mnl_cb_run.");
+            syslog(LOG_ERR, "Failed to process message with netlink callback: %s", strerror(errno));
             exit(EXIT_FAILURE);
         }
     }
