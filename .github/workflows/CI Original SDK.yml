@@ -1,7 +1,7 @@
 name: C/C++ CI Original
 
 on:
-  push
+  push:
     branches:
       - main
     tags:
