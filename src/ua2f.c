@@ -40,7 +40,7 @@ int child_status;
 static struct mnl_socket *nl;
 static const int queue_number = 10010;
 
-static const char COMMON_UA[] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.4.6379.82 Safari/537.36";
+static const char COMMON_UA[] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.5.7329.84 Safari/537.36";
 
 static long long UAcount = 0;
 static long long tcpcount = 0;
