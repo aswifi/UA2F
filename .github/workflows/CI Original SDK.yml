@@ -3,7 +3,7 @@ name: C/C++ CI Original
 on:
   push:
     branches:
-      - main
+      - master
     tags:
       - "v*"
 
