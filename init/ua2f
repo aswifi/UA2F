@@ -2,32 +2,29 @@
 
 START=50
 APP=ua2f
-SERVICE_WRITE_PID=1
-SERVICE_DAEMONIZE=1
-
-# 日志文件位置
 LOG_FILE=/var/log/$APP.log
 
 start() {
     # 删除旧的日志文件
     rm -f $LOG_FILE
 
+    # 创建ipset，并设置hashsize为16384，timeout为300秒
+    ipset create nohttp hash:ip,port hashsize 16384 timeout 300
+
     # 启动服务，并将输出和错误日志都重定向到日志文件中
-    service_start /usr/bin/$APP >> $LOG_FILE 2>&1 &
-}
-
-restart() {
-    # 停止服务
-    service_stop /usr/bin/$APP
-
-    # 等待服务完全停止
-    sleep 2
-
-    # 启动服务并记录输出和错误日志
-    service_start /usr/bin/$APP >> $LOG_FILE 2>&1 &
+    /usr/bin/$APP >> $LOG_FILE 2>&1 &
 }
 
 stop() {
     # 停止服务
     service_stop /usr/bin/$APP
+
+    # 记录停止服务的日志
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - Stopped $APP" >> $LOG_FILE
+
+    # 删除ipset
+    ipset destroy nohttp
+
+    # 记录删除ipset的日志
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - Deleted nohttp ipset" >> $LOG_FILE
 }

@@ -20,6 +20,8 @@
 #include <signal.h>
 #include <arpa/inet.h>
 
+#include <limits.h>
+
 #include <errno.h>
 
 #include <libmnl/libmnl.h>
@@ -38,7 +40,7 @@ int child_status;
 static struct mnl_socket *nl;
 static const int queue_number = 10010;
 
-static const char COMMON_UA[] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.3.4269.82 Safari/537.36";
+static const char COMMON_UA[] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.4.6379.82 Safari/537.36";
 
 static long long UAcount = 0;
 static long long tcpcount = 0;
@@ -55,9 +57,8 @@ char *UAstr = NULL;
 static struct ipset *Pipset;
 
 void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
-	
-    register char *cur, *last;
-    const char *cl = (const char *) l;
+
+    register char *cur = (char *) l;
     const char *cs = (const char *) s;
 
     /* we need something to compare */
@@ -72,12 +73,30 @@ void *memncasemem(const void *l, size_t l_len, const void *s, size_t s_len) {
     if (s_len == 1)
         return memchr(l, (int) *cs, l_len);
 
-    /* the last position where its possible to find "s" in "l" */
-    last = (char *) cl + l_len - s_len;
+    /* Boyer-Moore preprocessing */
+    int skip_table[UCHAR_MAX + 1];
+    for (int i = 0; i <= UCHAR_MAX; i++)
+        skip_table[i] = s_len;
+    for (int i = 0; i < s_len - 1; i++)
+        skip_table[(unsigned char) cs[i]] = s_len - i - 1;
 
-    for (cur = (char *) cl; cur <= last; cur++)
-        if (tolower(cur[0]) == tolower(cs[0]) && strncasecmp(cur, cs, s_len) == 0)
+    /* the last position where its possible to find "s" in "l" */
+    char *last = (char *) l + l_len - s_len;
+
+    /* search */
+    while (cur <= last) {
+        int j = s_len - 1;
+        while (j >= 0 && tolower(cur[j]) == tolower(cs[j]))
+            j--;
+        if (j < 0)
             return cur;
+        int skip_value = skip_table[(unsigned char) cur[j]];
+        if (skip_value < s_len - j) {
+            cur += s_len - j;
+        } else {
+            cur += skip_value;
+        }
+    }
 
     return NULL;
 }
@@ -112,7 +131,6 @@ static int parse_attrs(const struct nlattr *attr, void *data) {
 
     const struct nlattr **tb = data;
     int type = mnl_attr_get_type(attr);
-
     tb[type] = attr;
 
     return MNL_CB_OK;
@@ -126,7 +144,6 @@ nfq_send_verdict(int queue_num, uint32_t id, struct pkt_buff *pktb, uint32_t mar
     struct nlmsghdr *nlh;
     struct nlattr *nest;
     uint32_t setmark;
-
     nlh = nfq_nlmsg_put(buf, NFQNL_MSG_VERDICT, queue_num);
     nfq_nlmsg_verdict_put(nlh, (int) id, NF_ACCEPT);
 
@@ -185,8 +202,8 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     char *tcppkpayload;
 
     unsigned int tcppklen;
-    unsigned int uaoffset = 0;
-    unsigned int ualength = 0;
+    size_t uaoffset = 0;
+    size_t ualength = 0;
     void *payload;
     uint32_t mark = 0;
     bool noUA = false;
@@ -207,37 +224,36 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     }
 
     if (attr[NFQA_CT]) {
-        mnl_attr_parse_nested(attr[NFQA_CT], parse_attrs, ctattr);
+        struct nlattr *ctattr[CTA_MAX+1] = {0};
+        struct nlattr *originattr[CTA_TUPLE_MAX+1] = {0};
+        struct nlattr *portattr[CTA_PROTO_MAX+1] = {0};
 
-        if (ctattr[CTA_MARK]) {
-            mark = ntohl(mnl_attr_get_u32(ctattr[CTA_MARK]));
-        } else {
-            mark = 1; // no mark 1
+        if (mnl_attr_parse_nested(attr[NFQA_CT], parse_attrs, ctattr) < 0) {
+            perror("Failed to parse NFQA_CT attribute");
+            return;
         }
 
-        if (!ctattr[CTA_TUPLE_ORIG]) {
-            ip = "0.0.0.0";
+        uint32_t tmp_mark = 0;
+        if (ctattr[CTA_MARK]) {
+            tmp_mark = ntohl(mnl_attr_get_u32(ctattr[CTA_MARK]));
+        }
+        mark = tmp_mark ? tmp_mark : 1; // no mark 1
+
+        char tmp_ip[INET_ADDRSTRLEN];
+        if (ctattr[CTA_TUPLE_ORIG] &&
+            mnl_attr_parse_nested(ctattr[CTA_TUPLE_ORIG], parse_attrs, originattr) >= 0 &&
+            originattr[CTA_TUPLE_IP] &&
+            mnl_attr_parse_nested(originattr[CTA_TUPLE_IP], parse_attrs, &portattr) >= 0 &&
+            portattr && mnl_attr_get_type(portattr) == CTA_IP_V4_DST &&
+            portattr[CTA_IP_V4_DST]) {
+            uint32_t tmp = mnl_attr_get_u32(portattr[CTA_IP_V4_DST]);
+            struct in_addr tmp2 = {.s_addr = tmp};
+            inet_ntop(AF_INET, &tmp2, tmp_ip, INET_ADDRSTRLEN);
+            port = ntohs(mnl_attr_get_u16(portattr[CTA_PROTO_DST_PORT]));
+            strncpy(ip, tmp_ip, sizeof(ip));
+            snprintf(addcmd, sizeof(addcmd), "add nohttp %s,%d", ip, port);
         } else {
-            mnl_attr_parse_nested(ctattr[CTA_TUPLE_ORIG], parse_attrs, originattr);
-            if (!originattr[CTA_TUPLE_IP]) {
-                ip = "0.0.0.0";
-            } else {
-                mnl_attr_parse_nested(originattr[CTA_TUPLE_IP], parse_attrs, ipattr);
-                if (!ipattr[CTA_IP_V4_DST]) {
-                    ip = "0.0.0.0";
-                } else {
-                    uint32_t tmp = mnl_attr_get_u32(ipattr[CTA_IP_V4_DST]);
-                    struct in_addr tmp2 = {.s_addr = tmp};
-                    ip = inet_ntoa(tmp2);
-                }
-                if (originattr[CTA_TUPLE_PROTO]) {
-                    mnl_attr_parse_nested(originattr[CTA_TUPLE_PROTO], parse_attrs, portattr);
-                    if (portattr[CTA_PROTO_DST_PORT]) {
-                        port = ntohs(mnl_attr_get_u16(portattr[CTA_PROTO_DST_PORT]));
-                        snprintf(addcmd, sizeof(addcmd), "add nohttp %s,%d", ip, port);
-                    }
-                }
-            }
+            fprintf(stderr, "Failed to find valid IP address or protocol attributes\n");
         }
     }
 
@@ -265,21 +281,24 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     tcppklen = nfq_tcp_get_payload_len(tcppkhdl, pktb); //获取 tcp长度
 
     if (tcppkpayload) {
-        char *uapointer = memncasemem(tcppkpayload, tcppklen, "\r\nUser-Agent: ", 14); // 找到指向 UA 的第一个字符的指针
-
-        if (uapointer) {
+        char *uapointer = tcppkpayload;
+        size_t remaining_len = tcppklen;
+        while (true) {
+            uapointer = memncasemem(uapointer, remaining_len, "\r\nUser-Agent: ", 14);
+            if (!uapointer) {
+                noUA = true;
+                break;
+            }
             uaoffset = uapointer - tcppkpayload + 14; // 计算在 TCP 数据包中的偏移量
-
-            char *endpointer = memchr(uapointer + 14, '\r', tcppklen - uaoffset - 2); // 找到 UA 字符串的结尾
-
+            uapointer += 14;
+            remaining_len = tcppklen - uaoffset - 2;
+            char *endpointer = memchr(uapointer, '\r', remaining_len); // 找到 UA 字符串的结尾
             if (endpointer == NULL) {
                 syslog(LOG_WARNING, "User-Agent has no content");
                 nfq_send_verdict(ntohs(nfg->res_id), ntohl((uint32_t) ph->packet_id), pktb, mark, noUA, addcmd);
                 return MNL_CB_OK;
             }
-
-            ualength = endpointer - uapointer - 14;
-
+            ualength = endpointer - uapointer;
             if (nfq_tcp_mangle_ipv4(pktb, uaoffset, ualength, UAstr, ualength) == 1) {
                 UAcount++; // 记录修改包的数量
             } else {
@@ -287,8 +306,8 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
                 pktb_free(pktb);
                 return MNL_CB_ERROR;
             }
-        } else {
-            noUA = true;
+            uapointer = endpointer;
+            remaining_len = tcppklen - (uapointer - tcppkpayload);
         }
     }
 
@@ -305,6 +324,50 @@ static int queue_cb(const struct nlmsghdr *nlh, void *data) {
     return MNL_CB_OK;
 }
 
+int ua2f_processor(unsigned int error_limit) {
+    unsigned int errcount = 0;
+    for (; errcount <= error_limit; ++errcount) {
+        pid_t child_pid = fork();
+        if (child_pid == -1) {
+            perror("Failed to create child process");
+            exit(EXIT_FAILURE);
+        }
+        if (child_pid == 0) {
+            printf("UA2F processor started at [%d]\n", getpid());
+            return 0;
+        } else {
+            int status;
+            if (waitpid(child_pid, &status, 0) == -1) {
+                perror("Child process terminated unexpectedly");
+            } else {
+                if (WIFEXITED(status)) {
+                    printf("Child process exited with status %d\n", WEXITSTATUS(status));
+                } else if (WIFSIGNALED(status)) {
+                    printf("Child process was terminated by signal %d: %s\n", WTERMSIG(status), strsignal(WTERMSIG(status)));
+                }
+            }
+        }
+    }
+    printf("Too many errors occurred, no longer trying to recover.\n");
+    exit(EXIT_FAILURE);
+}
+
+void recv_and_process_messages(int nl, char* buf, size_t sizeof_buf, unsigned int portid) {
+    while (true) {
+        ssize_t ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
+        if (ret == -1) { //stop at failure
+            perror("Failed to receive message from netlink socket");
+            exit(EXIT_FAILURE);
+        }
+
+        ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
+        if (ret < 0) { //stop at failure
+            perror("Failed to process message with netlink callback");
+            exit(EXIT_FAILURE);
+        }
+    }
+}
+
 static void killChild() {
     syslog(LOG_INFO, "Received SIGTERM, kill child %d", child_status);
     kill(child_status, SIGKILL); // Not graceful, but work
@@ -319,37 +382,10 @@ int main(int argc, char *argv[]) {
     struct nlmsghdr *nlh;
     ssize_t ret;
     unsigned int portid;
-    int errcount = 0;
 
     signal(SIGTERM, killChild);
 
-    for (int errcount = 0; errcount <= 10; ++errcount) {
-        pid_t child_pid = fork();
-        if (child_pid == -1) {
-            syslog(LOG_ERR, "Failed to create child process: %s", strerror(errno));
-            exit(EXIT_FAILURE);
-        }
-        if (child_pid == 0) {
-            syslog(LOG_NOTICE, "UA2F processor started at [%d]", getpid());
-            break;
-        } else {
-            int status;
-            if (waitpid(child_pid, &status, 0) == -1) {
-                syslog(LOG_ERR, "Child process terminated unexpectedly: %s", strerror(errno));
-            } else {
-                if (WIFEXITED(status)) {
-                    syslog(LOG_ERR, "Child process exited with status %d", WEXITSTATUS(status));
-                } else if (WIFSIGNALED(status)) {
-                    syslog(LOG_ERR, "Child process was terminated by signal %d: %s", WTERMSIG(status),
-                           strsignal(WTERMSIG(status)));
-                }
-            }
-        }
-        if (errcount == 10) {
-            syslog(LOG_ERR, "Too many errors occurred, no longer trying to recover.");
-            exit(EXIT_FAILURE);
-        }
-    }
+    ua2f_processor(10);
 
     openlog("UA2F", LOG_PID, LOG_SYSLOG);
 
@@ -359,7 +395,7 @@ int main(int argc, char *argv[]) {
     Pipset = ipset_init();
 
     if (!Pipset) {
-        syslog(LOG_ERR, "Pipset not inited.");
+        printf("Pipset not inited.\n");
         exit(EXIT_FAILURE);
     }
 
@@ -371,26 +407,28 @@ int main(int argc, char *argv[]) {
 
     if (nl == NULL) {
         perror("mnl_socket_open");
-        syslog(LOG_ERR, "Exit at mnl_socket_open.");
+        printf("Exit at mnl_socket_open.\n");
         exit(EXIT_FAILURE);
     }
 
     if (mnl_socket_bind(nl, 0, MNL_SOCKET_AUTOPID) < 0) {
         perror("mnl_socket_bind");
-        syslog(LOG_ERR, "Exit at mnl_socket_bind.");
+        printf("Exit at mnl_socket_bind.\n");
         exit(EXIT_FAILURE);
     }
+    
     portid = mnl_socket_get_portid(nl);
 
     buf = malloc(sizeof_buf);
+    
     if (!buf) {
         perror("allocate receive buffer");
-        syslog(LOG_ERR, "Exit at breakpoint 6.");
+        printf("Exit at breakpoint 6.\n");
         exit(EXIT_FAILURE);
     }
 
     UAstr = malloc(sizeof_buf);
-    memset(UAstr, ' ', sizeof_buf); // 替换原始UA参数
+    memset(UAstr, ' ', sizeof_buf); // 先替换原始UA参数为空格
     // 在需要使用该字符串时直接引用COMMON_UA即可
     memcpy(UAstr, COMMON_UA, sizeof(COMMON_UA) - 1);
 
@@ -399,7 +437,7 @@ int main(int argc, char *argv[]) {
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
-        syslog(LOG_ERR, "Exit at breakpoint 7.");
+        printf("Exit at breakpoint 7.\n");
         exit(EXIT_FAILURE);
     }
 
@@ -413,7 +451,7 @@ int main(int argc, char *argv[]) {
 
     if (mnl_socket_sendto(nl, nlh, nlh->nlmsg_len) < 0) {
         perror("mnl_socket_send");
-        syslog(LOG_ERR, "Exit at mnl_socket_send.");
+        printf("Exit at mnl_socket_send.\n");
         exit(EXIT_FAILURE);
     }
 
@@ -422,17 +460,5 @@ int main(int argc, char *argv[]) {
 
     syslog(LOG_NOTICE, "UA2F has inited successful.");
 
-    while (true) {
-        ret = mnl_socket_recvfrom(nl, buf, sizeof_buf);
-        if (ret == -1) { //stop at failure
-            syslog(LOG_ERR, "Failed to receive message from netlink socket: %s", strerror(errno));
-            exit(EXIT_FAILURE);
-        }
-
-        ret = mnl_cb_run(buf, ret, 0, portid, (mnl_cb_t) queue_cb, NULL);
-        if (ret < 0) { //stop at failure
-            syslog(LOG_ERR, "Failed to process message with netlink callback: %s", strerror(errno));
-            exit(EXIT_FAILURE);
-        }
-    }
+    recv_and_process_messages(nl, buf, sizeof_buf, portid);
 }
